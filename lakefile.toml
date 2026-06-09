@@ -1,0 +1,16 @@
+name = "trident"
+version = "0.1.0"
+defaultTargets = ["Trident"]
+
+[[lean_lib]]
+name = "Trident"
+
+[[require]]
+name = "lean-mlir"
+git = "https://github.com/opencompl/lean-mlir.git"
+rev = "main"
+
+[[require]]
+name = "Cli"
+git = "https://github.com/leanprover/lean4-cli.git"
+rev = "main"
