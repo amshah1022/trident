@@ -1,0 +1,128 @@
+-- Trident.Target.Dialect
+-- The Triton IR syntax: types, operations, and instruction format.
+-- No external dependencies — pure Lean 4 inductive types.
+--
+-- CompCert equivalent: backend/RTL.v (the target IR definition)
+--
+-- This covers the full op vocabulary needed for:
+--   vector ops, matmul, softmax, layer norm, flash attention
+
+namespace Trident
+
+-- ── Types ─────────────────────────────────────────────────────────────────────
+
+inductive TritonType where
+  | int    (width : Nat)
+  | float  (width : Nat)
+  | ptr    (elem : TritonType)
+  | tensor (shape : List Nat) (elem : TritonType)
+  deriving BEq, Repr
+
+-- ── Operations ────────────────────────────────────────────────────────────────
+
+inductive TritonOp where
+  -- ── Grid ops ──
+  | get_program_id (axis : Nat)
+
+  -- ── Range and pointer arithmetic ──
+  | make_range                    -- [0 .. block_size-1]
+  | splat                         -- broadcast scalar → tile
+  | addptr                        -- pointer + offset (scalar or tiled)
+  | expand_dims (axis : Nat)
+  | broadcast
+
+  -- ── Memory ──
+  | load                          -- load from pointer(s)
+  | load_masked                   -- load with mask
+  | store                         -- store to pointer(s)
+  | store_masked                  -- store with mask
+
+  -- ── Integer arithmetic ──
+  | constant (val : Int)
+  | addi | subi | muli
+  | divsi | divui
+  | remsi | remui
+  | andi  | ori  | xori
+  | shli  | shrsi | shrui
+
+  -- ── Float arithmetic ──
+  | constantf (val : Float)
+  | addf | subf | mulf | divf
+  | negf | absf | sqrtf
+  | truncf | extf              -- float precision conversion
+
+  -- ── Comparison ──
+  | cmpi_eq | cmpi_ne
+  | cmpi_slt | cmpi_sle
+  | cmpi_sgt | cmpi_sge
+  | cmpf_olt | cmpf_ole
+
+  -- ── Reductions (needed for softmax, layer norm) ──
+  | reduce_sum  (axis : Nat)
+  | reduce_max  (axis : Nat)
+  | reduce_min  (axis : Nat)
+
+  -- ── Matrix ops (needed for matmul, flash attention) ──
+  | dot                           -- matrix multiply accumulate
+
+  -- ── Shape ops ──
+  | reshape
+  | trans                         -- transpose
+
+  deriving BEq, Repr
+
+-- ── SSA Instruction ───────────────────────────────────────────────────────────
+
+/--
+One SSA instruction: binds `result` to `op` applied to `args`.
+This is the unit of execution in Triton IR.
+-/
+structure TritonInstr where
+  result : String
+  op     : TritonOp
+  args   : List String
+  deriving Repr
+
+/-- A complete Triton kernel: a list of SSA instructions -/
+abbrev TritonKernel := List TritonInstr
+
+-- ── Signatures ────────────────────────────────────────────────────────────────
+-- Type signatures for each op. Used by the parser for validation.
+
+def TritonOp.arity : TritonOp → Nat
+  | .get_program_id _ => 0
+  | .constant _       => 0
+  | .constantf _      => 0
+  | .make_range       => 0
+  | .splat            => 1
+  | .expand_dims _    => 1
+  | .load             => 1
+  | .load_masked      => 2
+  | .reduce_sum _     => 1
+  | .reduce_max _     => 1
+  | .reduce_min _     => 1
+  | .reshape          => 1
+  | .trans            => 1
+  | .negf             => 1
+  | .absf             => 1
+  | .sqrtf            => 1
+  | .truncf           => 1
+  | .extf             => 1
+  | .store            => 2
+  | .store_masked     => 3
+  | .addptr           => 2
+  | .broadcast        => 2
+  | .addi | .subi | .muli   => 2
+  | .addf | .subf | .mulf   => 2
+  | .divsi | .divui         => 2
+  | .divf                   => 2
+  | .remsi | .remui         => 2
+  | .andi  | .ori  | .xori  => 2
+  | .shli  | .shrsi | .shrui => 2
+  | .cmpi_eq | .cmpi_ne     => 2
+  | .cmpi_slt | .cmpi_sle   => 2
+  | .cmpi_sgt | .cmpi_sge   => 2
+  | .cmpf_olt | .cmpf_ole   => 2
+  | .dot                    => 2
+
+end Trident

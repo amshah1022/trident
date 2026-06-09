@@ -1,0 +1,71 @@
+import Trident.Target.Dialect
+
+namespace Trident
+
+def parseOp (opName : String) : Option TritonOp :=
+  match opName with
+  | "tt.get_program_id" => some (.get_program_id 0)
+  | "tt.make_range"     => some .make_range
+  | "tt.splat"          => some .splat
+  | "tt.addptr"         => some .addptr
+  | "tt.load"           => some .load
+  | "tt.store"          => some .store
+  | "tt.expand_dims"    => some (.expand_dims 0)
+  | "tt.broadcast"      => some .broadcast
+  | "tt.dot"            => some .dot
+  | "tt.reduce"         => some (.reduce_sum 0)
+  | "arith.constant"    => some (.constant 0)
+  | "arith.addi"        => some .addi
+  | "arith.subi"        => some .subi
+  | "arith.muli"        => some .muli
+  | "arith.divsi"       => some .divsi
+  | "arith.addf"        => some .addf
+  | "arith.mulf"        => some .mulf
+  | _                   => none
+
+def isSSAVar (s : String) : Bool := s.startsWith "%"
+def stripPercent (s : String) : String := if s.startsWith "%" then s.drop 1 |>.toString else s
+
+def parseLine (line : String) : Option TritonInstr :=
+  let tokens := line.splitOn " " |>.filter (· != "")
+  match tokens with
+  | [] => none
+  | first :: rest =>
+    if isSSAVar first then
+      match rest with
+      | "=" :: opName :: remaining =>
+        match parseOp opName with
+        | none => none
+        | some op =>
+          let args := remaining.filter isSSAVar |>.map stripPercent
+          some { result := stripPercent first, op := op, args := args }
+      | _ => none
+    else
+      match parseOp first with
+      | none => none
+      | some op =>
+        let args := rest.filter isSSAVar |>.map stripPercent
+        some { result := "_", op := op, args := args }
+
+def parseKernelVerbose (src : String) : Except String TritonKernel :=
+  let lines := src.splitOn "\n"
+    |>.map (fun l => l.trim)
+    |>.filter (fun l => !l.isEmpty && !l.startsWith "//" &&
+                        !l.startsWith "func" && !l.startsWith "}")
+  let rec go : List String → Nat → Except String TritonKernel
+    | [], _ => .ok []
+    | l :: ls, n =>
+      match parseLine l with
+      | none => .error s!"Parse error on line {n}: {l}"
+      | some instr =>
+        match go ls (n + 1) with
+        | .error e => .error e
+        | .ok rest => .ok (instr :: rest)
+  go lines 1
+
+def parseKernel (src : String) : Option TritonKernel :=
+  match parseKernelVerbose src with
+  | .ok k => some k
+  | .error _ => none
+
+end Trident
