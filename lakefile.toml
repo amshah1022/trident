@@ -2,15 +2,28 @@ name = "trident"
 version = "0.1.0"
 defaultTargets = ["Trident"]
 
-[[lean_lib]]
-name = "Trident"
+# Mathlib: omega, simp lemmas, List theorems, tactic infrastructure
+[[require]]
+name = "mathlib"
+git = "https://github.com/leanprover-community/mathlib4"
+rev = "v4.14.0"
 
+# lean-mlir: SSA/MLIR infrastructure for parsing Triton IR
 [[require]]
 name = "lean-mlir"
 git = "https://github.com/opencompl/lean-mlir.git"
 rev = "main"
 
+# CLI for the industry-facing push-button tool
 [[require]]
 name = "Cli"
 git = "https://github.com/leanprover/lean4-cli.git"
 rev = "main"
+
+[[lean_lib]]
+name = "Trident"
+
+# Industry-facing binary: `trident verify my_kernel.ttir --against VectorAdd`
+[[lean_exe]]
+name = "trident"
+root = "Main"
