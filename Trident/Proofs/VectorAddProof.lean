@@ -23,6 +23,7 @@ def vectorAddInitState (a b : List Int) (pid bs gs : Nat) : MachineState :=
       | "a_base" => some (TritonValue.scalar 0)
       | "b_base" => some (TritonValue.scalar (Int.ofNat n))
       | "c_base" => some (TritonValue.scalar (Int.ofNat (2 * n)))
+      | "bsize"  => some (TritonValue.scalar (Int.ofNat bs))
       | _        => none }
 
 def vectorAddSourceSem : SourceSemantics :=
