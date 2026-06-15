@@ -45,10 +45,10 @@ theorem eval_relu (xs : List Int) :
   simp [TensorExpr.relu, TensorExpr.eval]
 
 @[simp]
-theorem eval_vectorAdd_getD (a b : List Int) (i : Nat) :
+theorem eval_vectorAdd_getD (a b : List Int) (i : Nat) (h_len : a.length = b.length) :
     (TensorExpr.vectorAdd.eval [a, b]).getD i 0 =
     a.getD i 0 + b.getD i 0 := by
-  simp [TensorExpr.vectorAdd, TensorExpr.eval]
-  sorry
+  simp only [TensorExpr.vectorAdd, TensorExpr.eval]
+  exact zipWith_add_getD a b i h_len
 
 end Trident

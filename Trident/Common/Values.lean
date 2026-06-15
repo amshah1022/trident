@@ -57,4 +57,28 @@ def zipWith (f : Int → Int → Int) : TritonValue → TritonValue → Option T
   | _,             _             => none
 
 end TritonValue
+-- Key lemma: getD of zip+map with equal-length lists
+theorem zipWith_add_getD (a b : List Int) (i : Nat) (h_len : a.length = b.length) :
+    ((a.zip b).map (fun p => p.fst + p.snd)).getD i 0 =
+    a.getD i 0 + b.getD i 0 := by
+  by_cases h : i < a.length
+  · have hb : i < b.length := by omega
+    have hzip : i < (a.zip b).length := by simp [List.length_zip]; omega
+    have hmap : i < ((a.zip b).map (fun p => p.fst + p.snd)).length := by
+      rw [List.length_map]; exact hzip
+    rw [show ((a.zip b).map (fun p => p.fst + p.snd)).getD i 0 =
+        ((a.zip b).map (fun p => p.fst + p.snd))[i] from by
+      simp [List.getD, List.getElem?_eq_getElem hmap]]
+    rw [show a.getD i 0 = a[i] from by simp [List.getD, List.getElem?_eq_getElem h]]
+    rw [show b.getD i 0 = b[i] from by simp [List.getD, List.getElem?_eq_getElem hb]]
+    simp [List.getElem_map, List.getElem_zip]
+  · have ha : a.length <= i := Nat.not_lt.mp h
+    have hb : b.length <= i := by omega
+    have hzip : (a.zip b).length <= i := by simp [List.length_zip]; omega
+    have hmap : ((a.zip b).map (fun p => p.fst + p.snd)).length <= i := by
+      rw [List.length_map]; exact hzip
+    simp [List.getD, List.getElem?_eq_none hmap,
+          List.getElem?_eq_none ha, List.getElem?_eq_none hb]
+
+
 end Trident

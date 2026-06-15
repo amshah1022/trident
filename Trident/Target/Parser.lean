@@ -2,7 +2,7 @@ import Trident.Target.Dialect
 
 namespace Trident
 
-def parseOp (opName : String) : Option TritonOp :=
+def parseOp (opName : String) (rest : List String := []) : Option TritonOp :=
   match opName with
   | "tt.get_program_id" => some (.get_program_id 0)
   | "tt.make_range"     => some .make_range
@@ -14,7 +14,10 @@ def parseOp (opName : String) : Option TritonOp :=
   | "tt.broadcast"      => some .broadcast
   | "tt.dot"            => some .dot
   | "tt.reduce"         => some (.reduce_sum 0)
-  | "arith.constant"    => some (.constant 0)
+  | "arith.constant"    =>
+      let val := rest.filter (fun t => t.toInt?.isSome)
+                  |>.head? |>.bind String.toInt?
+      some (.constant (val.getD 0))
   | "arith.addi"        => some .addi
   | "arith.subi"        => some .subi
   | "arith.muli"        => some .muli
@@ -24,7 +27,9 @@ def parseOp (opName : String) : Option TritonOp :=
   | _                   => none
 
 def isSSAVar (s : String) : Bool := s.startsWith "%"
-def stripPercent (s : String) : String := if s.startsWith "%" then s.drop 1 |>.toString else s
+def stripPercent (s : String) : String :=
+  let s := if s.endsWith "," then s.dropRight 1 else s
+  if s.startsWith "%" then s.drop 1 |>.toString else s
 
 def parseLine (line : String) : Option TritonInstr :=
   let tokens := line.splitOn " " |>.filter (· != "")
@@ -34,14 +39,14 @@ def parseLine (line : String) : Option TritonInstr :=
     if isSSAVar first then
       match rest with
       | "=" :: opName :: remaining =>
-        match parseOp opName with
+        match parseOp opName remaining with
         | none => none
         | some op =>
           let args := remaining.filter isSSAVar |>.map stripPercent
           some { result := stripPercent first, op := op, args := args }
       | _ => none
     else
-      match parseOp first with
+      match parseOp first rest with
       | none => none
       | some op =>
         let args := rest.filter isSSAVar |>.map stripPercent
@@ -51,7 +56,10 @@ def parseKernelVerbose (src : String) : Except String TritonKernel :=
   let lines := src.splitOn "\n"
     |>.map (fun l => l.trim)
     |>.filter (fun l => !l.isEmpty && !l.startsWith "//" &&
-                        !l.startsWith "func" && !l.startsWith "}")
+                        !l.startsWith "func" && !l.startsWith "}" &&
+                        !l.startsWith "module" && !l.startsWith "tt.return" &&
+                        !l.startsWith "#" && !l.startsWith "attributes" &&
+                        !l.startsWith "tt.func" && !l.startsWith "%arg")
   let rec go : List String → Nat → Except String TritonKernel
     | [], _ => .ok []
     | l :: ls, n =>

@@ -96,4 +96,70 @@ theorem writeMem_lookup (s : MachineState) (addr : Nat) (val : Int) (v : String)
   simp [writeMem, lookup]
 
 end MachineState
+-- General lemma: foldl writeMem over addresses not containing `addr` preserves readMem addr
+theorem foldl_writeMem_not_mem
+    (addrs : List Nat) (vals : List Int) (s : MachineState) (addr : Nat)
+    (h : addr ∉ addrs) :
+    (List.foldl (fun st (x : Nat × Int) => MachineState.writeMem st x.fst x.snd)
+       s (addrs.zip vals)).readMem addr = s.readMem addr := by
+  induction addrs generalizing vals s with
+  | nil => simp
+  | cons a as ih =>
+    cases vals with
+    | nil => simp
+    | cons v vs =>
+      simp only [List.zip_cons_cons, List.foldl_cons]
+      simp only [List.mem_cons, not_or] at h
+      rw [ih vs (s.writeMem a v) h.2]
+      exact MachineState.writeMem_readMem_other s a addr v (Ne.symm h.1)
+
+-- General lemma: foldl writeMem over a Nodup address list, reading at addrs[i], gives vals[i]
+theorem foldl_writeMem_readMem
+    (addrs : List Nat) (vals : List Int) (s : MachineState)
+    (hlen : addrs.length = vals.length) (hnodup : addrs.Nodup)
+    (i : Nat) (hi : i < addrs.length) :
+    (List.foldl (fun st (x : Nat × Int) => MachineState.writeMem st x.fst x.snd)
+       s (addrs.zip vals)).readMem (addrs.getD i 0) = vals.getD i 0 := by
+  induction addrs generalizing vals s i with
+  | nil => simp at hi
+  | cons a as ih =>
+    cases vals with
+    | nil => simp at hlen
+    | cons v vs =>
+      simp only [List.zip_cons_cons, List.foldl_cons]
+      rw [List.nodup_cons] at hnodup
+      cases i with
+      | zero =>
+        simp only [List.getD_cons_zero]
+        rw [foldl_writeMem_not_mem as vs (s.writeMem a v) a hnodup.1]
+        exact MachineState.writeMem_readMem_self s a v
+      | succ n =>
+        simp only [List.getD_cons_succ]
+        simp only [List.length_cons] at hlen hi
+        exact ih vs (s.writeMem a v) (by omega) hnodup.2 n (by omega)
+
+-- General lemma: a strictly monotone/injective map of List.range is Nodup
+theorem nodup_map_injective (f : Nat -> Nat) (l : List Nat)
+    (h : forall x y, f x = f y -> x = y) (hl : l.Nodup) :
+    (l.map f).Nodup := by
+  induction l with
+  | nil => simp
+  | cons a as ih =>
+    rw [List.nodup_cons] at hl
+    simp only [List.map_cons, List.nodup_cons]
+    constructor
+    · intro hmem
+      simp only [List.mem_map] at hmem
+      obtain ⟨x, hx, hfx⟩ := hmem
+      exact hl.1 (h x a hfx ▸ hx)
+    · exact ih hl.2
+
+-- General lemma: getElem? of a zip, when both indices are in range
+theorem getElem?_zip {α β : Type} {l1 : List α} {l2 : List β} {i : Nat}
+    (h1 : i < l1.length) (h2 : i < l2.length) :
+    (l1.zip l2)[i]? = some (l1[i]'h1, l2[i]'h2) := by
+  rw [List.getElem?_eq_getElem (by simp; omega)]
+  congr 1
+  simp [List.getElem_zip]
+
 end Trident

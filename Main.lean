@@ -48,37 +48,25 @@ def runVerify (p : Parsed) : IO UInt32 := do
 
   IO.println s!"Trident — CompCert-style verification for Triton kernels"
   IO.println s!"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  IO.println s!"Kernel : {kernelPath}"
-  IO.println s!"Against: {specName}"
-  IO.println ""
 
-  -- Check if the spec exists in the registry
   if !specRegistry.contains specName then
     IO.println s!"✗ Unknown spec: '{specName}'"
-    IO.println s!"  Available specs: {specRegistry}"
     return 1
 
-  -- TODO: Parse the .ttir file and run semantic equivalence check
-  -- For now: structural check that the kernel parses correctly
-  IO.println s!"  Checking kernel syntax..."
-  if verbose then
-    IO.println s!"  Loading spec: {specName}"
-    IO.println s!"  Running forward simulation check..."
+  -- 1. Read the file from disk
+  let lines ← IO.FS.readFile kernelPath
 
-  -- Placeholder: in the full implementation this calls the Lean
-  -- equivalence checker which compares the parsed kernel IR against
-  -- the proved reference using the simulation relation
-  IO.println s!"✓ Verified: semantically equivalent to reference {specName}"
-  IO.println s!"  Proof certificate: ~/.trident/certs/{specName}.lean"
-  IO.println s!"  Checked in 0.0s"
-  IO.println ""
-  IO.println s!"  This kernel is guaranteed to compute:"
-  match specName with
-  | "VectorAdd" =>
-    IO.println s!"    output[i] = a[i] + b[i]  for all i"
-  | _ =>
-    IO.println s!"    (see spec definition in Trident/Specs/{specName}.lean)"
-  return 0
+  -- 2. Run the parser
+  match parseKernel lines with
+  | none =>
+    IO.println s!"✗ Parse error: Failed to parse Triton IR in {kernelPath}"
+    return 1
+  | some parsedKernel =>
+    if verbose then
+      IO.println s!"✓ Successfully parsed {parsedKernel.length} SSA instructions."
+
+    -- 3. Run the Equivalence Checker (Step 2 below)
+    -- ...
 
 -- The list command: shows all verified reference kernels
 def listCmd : Cmd := `[Cli|

@@ -5,7 +5,6 @@ namespace Trident
 
 def compiledVectorAdd : TritonKernel := [
   { result := "pid",    op := .get_program_id 0, args := [] },
-  { result := "bsize",  op := .constant 0,        args := [] },
   { result := "bstart", op := .muli,              args := ["pid", "bsize"] },
   { result := "range",  op := .make_range,         args := [] },
   { result := "offset", op := .addi,              args := ["bstart", "range"] },
