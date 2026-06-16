@@ -85,6 +85,24 @@ def evalOp (op : TritonOp) (args : List String) (s : MachineState)
               else none
       | _ => none
 
+  | .addf =>
+      match args with
+      | [a, b] =>
+          (s.lookup a).bind fun va =>
+          (s.lookup b).bind fun vb =>
+          match va, vb with
+          | TritonValue.scalar x, TritonValue.scalar y =>
+              some (TritonValue.scalar (x + y))
+          | TritonValue.scalar x, TritonValue.tensor sh ys =>
+              some (TritonValue.tensor sh (ys.map (· + x)))
+          | TritonValue.tensor sh xs, TritonValue.scalar y =>
+              some (TritonValue.tensor sh (xs.map (· + y)))
+          | TritonValue.tensor s1 xs, TritonValue.tensor s2 ys =>
+              if s1 == s2
+              then some (TritonValue.tensor s1 ((xs.zip ys).map (fun (x,y) => x + y)))
+              else none
+      | _ => none
+
   | .subi =>
       match args with
       | [a, b] =>

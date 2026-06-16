@@ -1,78 +1,51 @@
--- Main.lean
--- The industry-facing CLI for Trident.
---
--- Usage:
---   trident verify <kernel.ttir> --against <SpecName>
---   trident list-specs
---   trident check-proof <SpecName>
---
--- This is what ML engineers at vLLM, Modular, etc. actually run.
--- They never open Lean. They get a yes/no with a proof certificate path.
-
 import Trident
+import Trident.Common.Equiv
 import Cli
 
 open Cli
+open Trident
 
 -- Registry of all verified reference kernels
--- Add entries here as new proofs are completed
 def specRegistry : List String := [
   "VectorAdd",
-  -- "ReLU",       -- coming soon
-  -- "Matmul",     -- coming soon
-  -- "LayerNorm",  -- coming soon
-  -- "Softmax",    -- coming soon
 ]
 
--- The verify command
-def verifyCmd : Cmd := `[Cli|
-  verify VIA runVerify;
-  "Verify that a Triton kernel matches a proved reference specification."
-
-  FLAGS:
-    against : String; "The reference spec to verify against (e.g. VectorAdd)"
-    verbose;          "Show detailed verification steps"
-    cert    : String; "Path to write the proof certificate"
-
-  ARGS:
-    kernel : String;  "Path to the .ttir kernel file to verify"
-
-  EXTENSIONS:
-    author "Trident"
-]
-
+-- Define handlers BEFORE commands that reference them
 def runVerify (p : Parsed) : IO UInt32 := do
   let kernelPath := p.positionalArg! "kernel" |>.as! String
   let specName   := p.flag! "against" |>.as! String
   let verbose    := p.hasFlag "verbose"
-
   IO.println s!"Trident — CompCert-style verification for Triton kernels"
   IO.println s!"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
   if !specRegistry.contains specName then
     IO.println s!"✗ Unknown spec: '{specName}'"
     return 1
-
-  -- 1. Read the file from disk
-  let lines ← IO.FS.readFile kernelPath
-
-  -- 2. Run the parser
-  match parseKernel lines with
+  let contents ← IO.FS.readFile kernelPath
+  match parseKernel contents with
   | none =>
-    IO.println s!"✗ Parse error: Failed to parse Triton IR in {kernelPath}"
+    IO.println s!"✗ Parse error: could not parse {kernelPath}"
     return 1
   | some parsedKernel =>
     if verbose then
-      IO.println s!"✓ Successfully parsed {parsedKernel.length} SSA instructions."
-
-    -- 3. Run the Equivalence Checker (Step 2 below)
-    -- ...
-
--- The list command: shows all verified reference kernels
-def listCmd : Cmd := `[Cli|
-  list VIA runList;
-  "List all verified reference kernels in the Trident library."
-]
+      IO.println s!"✓ Parsed {parsedKernel.length} instructions"
+    match specName with
+    | "VectorAdd" =>
+      match verifyAgainstVectorAdd parsedKernel with
+      | .equivalent =>
+        IO.println s!"✓ Verified: {kernelPath} matches reference VectorAdd"
+        IO.println s!"  Certificate: vectorAdd_correct (Lean proof term)"
+        IO.println s!"  Checked {parsedKernel.length} instructions against proved reference"
+        return 0
+      | .notEquivalent msg =>
+        IO.println s!"✗ Not equivalent: {msg}"
+        IO.println s!"  Kernel does not match reference VectorAdd specification"
+        return 1
+      | .parseError =>
+        IO.println s!"✗ Internal error during equivalence check"
+        return 1
+    | _ =>
+      IO.println s!"✗ No checker for spec: {specName}"
+      return 1
 
 def runList (_ : Parsed) : IO UInt32 := do
   IO.println "Trident Reference Kernel Library"
@@ -82,23 +55,30 @@ def runList (_ : Parsed) : IO UInt32 := do
   for spec in specRegistry do
     IO.println s!"  ✓ {spec}"
   IO.println ""
-  IO.println "Coming soon:"
-  IO.println "  · ReLU"
-  IO.println "  · Matmul"
-  IO.println "  · LayerNorm"
-  IO.println "  · Softmax"
-  IO.println "  · FlashAttention"
+  IO.println "Coming soon: ReLU, Matmul, LayerNorm, Softmax, FlashAttention"
   return 0
 
--- Root command
+-- Commands defined AFTER handlers
+def verifyCmd : Cmd := `[Cli|
+  verify VIA runVerify;
+  "Verify that a Triton kernel matches a proved reference specification."
+  FLAGS:
+    against : String; "The reference spec to verify against (e.g. VectorAdd)"
+    verbose;          "Show detailed verification steps"
+  ARGS:
+    kernel : String;  "Path to the .ttir kernel file to verify"
+  EXTENSIONS:
+    author "Trident"
+]
+
+def listCmd : Cmd := `[Cli|
+  list VIA runList;
+  "List all verified reference kernels in the Trident library."
+]
+
 def tridentCmd : Cmd := `[Cli|
   trident NOOP;
-  "Trident: CompCert-style formal verification for Triton GPU kernels.
-Proves that your Triton IR correctly implements mathematical specifications
-via forward simulation — the same methodology as CompCert.
-
-Repository: https://github.com/your-handle/trident"
-
+  "Trident: CompCert-style formal verification for Triton GPU kernels."
   SUBCOMMANDS:
     verifyCmd;
     listCmd
