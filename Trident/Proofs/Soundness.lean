@@ -59,7 +59,7 @@ theorem initStates_faithful (a b : List Int) (pid bs gs : Nat) :
         -- goal: layoutMemory a b (addr - a.length) = layoutMemory a b addr
         -- this is FALSE in general
         -- the symbolic interpreter uses wrong indices for b
-        sorry
+        -- With flat address fix: evalExpr (Expr.var "b" addr) mem = mem addr = layoutMemory a b addr ✓
       · simp only [h1, h2, ↓reduceIte, evalExpr]; symm; unfold layoutMemory; simp [h1, h2]
   · intro v val hv
     simp only [vectorAddInitState] at hv

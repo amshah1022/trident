@@ -78,7 +78,7 @@ def normalizeExpr (e : Expr) (mem : Nat → Expr) : Expr :=
 def normalizeWithMem (e : Expr) (n : Nat) : Expr :=
   normalizeExpr e (fun addr =>
     if addr < n then Expr.var "a" addr
-    else if addr < 2 * n then Expr.var "b" (addr - n)
+    else if addr < 2 * n then Expr.var "b" addr
     else Expr.lit 0)
 
 -- ── Symbolic Operation Semantics ──────────────────────────────────────────────
@@ -240,7 +240,7 @@ def symVectorAddInitState (pid bs gs n : Nat) : SymState :=
   , grid_size  := gs
   , memory     := fun addr =>
       if addr < n then Expr.var "a" addr
-      else if addr < 2 * n then Expr.var "b" (addr - n)
+      else if addr < 2 * n then Expr.var "b" addr
       else Expr.lit 0
   , env        := fun v => match v with
       | "a_base" => some (SymValue.scalar (Expr.lit 0))
@@ -252,13 +252,13 @@ def symVectorAddInitState (pid bs gs n : Nat) : SymState :=
       | "bsize"  => some (SymValue.scalar (Expr.lit (Int.ofNat bs)))
       | _        => none }
 
-def vectorAddSpecExpr (pid bs i : Nat) : Expr :=
-  Expr.add (Expr.var "a" (pid * bs + i)) (Expr.var "b" (pid * bs + i))
+def vectorAddSpecExpr (pid bs i n : Nat) : Expr :=
+  Expr.add (Expr.var "a" (pid * bs + i)) (Expr.var "b" (n + pid * bs + i))
 
 def symCheckVectorAdd (kernel : TritonKernel) (pid bs gs n i : Nat) : Bool :=
   let s' := symEvalKernel kernel (symVectorAddInitState pid bs gs n)
   let raw  := s'.memory (2 * n + pid * bs + i)
   let norm := normalizeWithMem raw n
-  norm == vectorAddSpecExpr pid bs i
+  norm == vectorAddSpecExpr pid bs i n
 
 end Trident
