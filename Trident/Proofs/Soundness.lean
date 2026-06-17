@@ -69,15 +69,25 @@ theorem initStates_faithful (a b : List Int) (pid bs gs : Nat) :
     simp only [vectorAddInitState] at hv
     split at hv <;> simp_all
 
+-- ── Per-Instruction Faithfulness ────────────────────────────────────────────
+
+/-- Each instruction preserves StatesFaithful -/
+theorem evalInstr_faithful (instr : TritonInstr)
+    (s : MachineState) (ss : SymState) (mem : Nat -> Int)
+    (h : StatesFaithful s ss mem) :
+    StatesFaithful (evalInstr instr s) (symEvalInstr instr ss) mem := by
+  sorry
+
 theorem symEvalKernel_faithful (K : TritonKernel)
-    (s : MachineState) (ss : SymState) (mem : Nat → Int)
+    (s : MachineState) (ss : SymState) (mem : Nat -> Int)
     (h : StatesFaithful s ss mem) :
     StatesFaithful (evalKernel K s) (symEvalKernel K ss) mem := by
   induction K generalizing s ss with
   | nil => simp [evalKernel, symEvalKernel]; exact h
   | cons instr rest ih =>
     simp only [evalKernel, symEvalKernel, List.foldl]
-    apply ih; sorry
+    exact ih (evalInstr instr s) (symEvalInstr instr ss)
+      (evalInstr_faithful instr s ss mem h)
 
 theorem symEval_sound (K : TritonKernel) (a b : List Int)
     (pid bs gs i : Nat) :
