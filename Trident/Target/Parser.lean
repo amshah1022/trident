@@ -18,6 +18,21 @@ def parseOp (opName : String) (rest : List String := []) : Option TritonOp :=
       let val := rest.filter (fun t => t.toInt?.isSome)
                   |>.head? |>.bind String.toInt?
       some (.constant (val.getD 0))
+  | "arith.cmpi"        =>
+      -- extract the predicate (slt, sle, sgt, sge, eq, ne)
+      let pred := rest.head? |>.getD ""
+      match pred with
+      | "slt," => some .cmpi_slt
+      | "sle," => some .cmpi_sle
+      | "sgt," => some .cmpi_sgt
+      | "sge," => some .cmpi_sge
+      | "eq,"  => some .cmpi_eq
+      | "ne,"  => some .cmpi_ne
+      | _      => some .cmpi_slt  -- default
+  | "arith.cmpf"        =>
+      -- treat all float comparisons as cmpi_sge for now (integer model)
+      some .cmpi_sge
+  | "arith.select"      => some .select
   | "arith.addi"        => some .addi
   | "arith.subi"        => some .subi
   | "arith.muli"        => some .muli
@@ -59,7 +74,10 @@ def parseKernelVerbose (src : String) : Except String TritonKernel :=
                         !l.startsWith "func" && !l.startsWith "}" &&
                         !l.startsWith "module" && !l.startsWith "tt.return" &&
                         !l.startsWith "#" && !l.startsWith "attributes" &&
-                        !l.startsWith "tt.func" && !l.startsWith "%arg")
+                        !l.startsWith "tt.func" &&
+                        -- skip parameter declaration lines:
+                        -- these start with % but have no = (SSA assignments always have =)
+                        !(l.startsWith "%" && !l.contains " = "))
   let rec go : List String → Nat → Except String TritonKernel
     | [], _ => .ok []
     | l :: ls, n =>

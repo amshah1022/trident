@@ -151,6 +151,50 @@ def evalOp (op : TritonOp) (args : List String) (s : MachineState)
         | _ => none
       | _ => none
 
+  | .select =>
+      match args with
+      | [cond, a, b] =>
+          (s.lookup cond).bind fun vc =>
+          (s.lookup a).bind fun va =>
+          (s.lookup b).bind fun vb =>
+          match vc, va, vb with
+          | TritonValue.tensor sh cs,
+            TritonValue.tensor _ as_,
+            TritonValue.tensor _ bs_ =>
+              some (TritonValue.tensor sh
+                ((cs.zip (as_.zip bs_)).map fun (c, av, bv) =>
+                  if c != 0 then av else bv))
+          | _, _, _ => none
+      | _ => none
+
+  | .cmpi_slt =>
+      match args with
+      | [a, b] =>
+          (s.lookup a).bind fun va =>
+          (s.lookup b).bind fun vb =>
+          match va, vb with
+          | TritonValue.tensor sh xs, TritonValue.tensor _ ys =>
+              some (TritonValue.tensor sh
+                ((xs.zip ys).map fun (x, y) => if x < y then 1 else 0))
+          | TritonValue.scalar x, TritonValue.scalar y =>
+              some (TritonValue.scalar (if x < y then 1 else 0))
+          | _, _ => none
+      | _ => none
+
+  | .cmpi_sge =>
+      match args with
+      | [a, b] =>
+          (s.lookup a).bind fun va =>
+          (s.lookup b).bind fun vb =>
+          match va, vb with
+          | TritonValue.tensor sh xs, TritonValue.tensor _ ys =>
+              some (TritonValue.tensor sh
+                ((xs.zip ys).map fun (x, y) => if x >= y then 1 else 0))
+          | TritonValue.scalar x, TritonValue.scalar y =>
+              some (TritonValue.scalar (if x >= y then 1 else 0))
+          | _, _ => none
+      | _ => none
+
   -- Store and all unimplemented ops handled in evalInstr
   | _ => none
 

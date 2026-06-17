@@ -140,6 +140,32 @@ def symEvalOp (op : TritonOp) (args : List String) (s : SymState)
   | .addf => match args with
       | [a, b] => symAdd (s.lookup a) (s.lookup b)
       | _ => none
+  | .cmpi_slt =>
+      -- comparison: produces tensor of symbolic booleans (0/1)
+      -- for symbolic purposes just bind result as a tensor marker
+      match args with
+      | [a, b] => match s.lookup a, s.lookup b with
+        | some (SymValue.tensor n _), some (SymValue.tensor _ _) =>
+            some (SymValue.tensor n (fun _ => Expr.lit 1))  -- symbolic: assume in-bounds
+        | some (SymValue.scalar _), some (SymValue.scalar _) =>
+            some (SymValue.scalar (Expr.lit 1))
+        | _, _ => none
+      | _ => none
+
+  | .cmpi_sge =>
+      match args with
+      | [a, b] => match s.lookup a, s.lookup b with
+        | some (SymValue.tensor n _), some (SymValue.tensor _ _) =>
+            some (SymValue.tensor n (fun _ => Expr.lit 1))
+        | some (SymValue.tensor n _), some (SymValue.scalar _) =>
+            some (SymValue.tensor n (fun _ => Expr.lit 1))
+        | some (SymValue.scalar _), some (SymValue.tensor n _) =>
+            some (SymValue.tensor n (fun _ => Expr.lit 1))
+        | some (SymValue.scalar _), some (SymValue.scalar _) =>
+            some (SymValue.scalar (Expr.lit 1))
+        | _, _ => none
+      | _ => none
+
   | .maxsi => match args with
       | [a, b] => symMax (s.lookup a) (s.lookup b)
       | _ => none
@@ -151,14 +177,34 @@ def symEvalOp (op : TritonOp) (args : List String) (s : SymState)
         | _, _ => none
       | _ => none
   | .load =>
-      match args with
-      | [p] => match s.lookup p with
-        | some (SymValue.tensor n addrs) =>
-            some (SymValue.tensor n (fun i => Expr.load (addrs i)))
-        | some (SymValue.scalar addr) =>
-            some (SymValue.scalar (Expr.load addr))
-        | _ => none
+      -- handle both regular load [ptr] and masked load [ptr, mask]
+      let ptr := args.head? |>.getD ""
+      match s.lookup ptr with
+      | some (SymValue.tensor n addrs) =>
+          some (SymValue.tensor n (fun i => Expr.load (addrs i)))
+      | some (SymValue.scalar addr) =>
+          some (SymValue.scalar (Expr.load addr))
       | _ => none
+  | .select =>
+      match args with
+      | [cond, a, b] => match s.lookup cond, s.lookup a, s.lookup b with
+        | some (SymValue.tensor n _),
+          some (SymValue.tensor _ as_),
+          some (SymValue.tensor _ bs_) =>
+            -- select(cond, a, b): symbolically = max(b, a) for ReLU pattern
+            some (SymValue.tensor n (fun i => Expr.max (bs_ i) (as_ i)))
+        | some (SymValue.tensor n _),
+          some (SymValue.tensor _ as_),
+          some (SymValue.scalar b) =>
+            -- select(cond, tensor, scalar): e.g. select(x>=0, x, 0)
+            some (SymValue.tensor n (fun i => Expr.max b (as_ i)))
+        | some (SymValue.tensor n _),
+          some (SymValue.scalar a),
+          some (SymValue.tensor _ bs_) =>
+            some (SymValue.tensor n (fun i => Expr.max (bs_ i) a))
+        | _, _, _ => none
+      | _ => none
+
   | .store => none
   | _ => none
 
@@ -167,14 +213,17 @@ def symEvalOp (op : TritonOp) (args : List String) (s : SymState)
 def symEvalInstr (instr : TritonInstr) (s : SymState) : SymState :=
   match instr.op with
   | .store =>
-      match instr.args with
-      | [p, v] => match s.lookup p, s.lookup v with
-        | some (SymValue.tensor n addrs), some (SymValue.tensor _ vals) =>
-            List.foldl (fun st i =>
-              let addr := (evalExpr (addrs i) (fun _ => 0)).natAbs
-              st.writeMem addr (vals i)) s (List.range n)
-        | _, _ => s
-      | _ => s
+      -- handle both 2-arg store and 3-arg masked store (ignore mask)
+      let (p, v) := match instr.args with
+        | [p, v]    => (p, v)
+        | [p, v, _] => (p, v)  -- masked store: ignore mask
+        | _         => ("", "")
+      match s.lookup p, s.lookup v with
+      | some (SymValue.tensor n addrs), some (SymValue.tensor _ vals) =>
+          List.foldl (fun st i =>
+            let addr := (evalExpr (addrs i) (fun _ => 0)).natAbs
+            st.writeMem addr (vals i)) s (List.range n)
+      | _, _ => s
   | _ =>
       match symEvalOp instr.op instr.args s with
       | some val => s.bind instr.result val

@@ -37,8 +37,12 @@ def symReLUInitState (pid bs gs n : Nat) : SymState :=
   , env        := fun v => match v with
       | "x_base"   => some (SymValue.scalar (Expr.lit 0))
       | "out_base" => some (SymValue.scalar (Expr.lit (Int.ofNat n)))
-      | "bsize"    => some (SymValue.scalar (Expr.lit (Int.ofNat bs)))
-      | _          => none }
+      -- real TTIR uses x_ptr/out_ptr as parameter names
+      | "x_ptr"    => some (SymValue.scalar (Expr.lit 0))
+      | "out_ptr"  => some (SymValue.scalar (Expr.lit (Int.ofNat n)))
+      | "bsize"      => some (SymValue.scalar (Expr.lit (Int.ofNat bs)))
+      | "n_elements" => some (SymValue.scalar (Expr.lit (Int.ofNat n)))
+      | _            => none }
 
 /-- ReLU spec: output[i] = max(0, x[i]) -/
 def reLUSpecExpr (pid bs i : Nat) : Expr :=

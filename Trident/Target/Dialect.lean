@@ -53,6 +53,7 @@ inductive TritonOp where
   | truncf | extf              -- float precision conversion
 
   -- ── Comparison ──
+  | select                          -- conditional select
   | cmpi_eq | cmpi_ne
   | cmpi_slt | cmpi_sle
   | cmpi_sgt | cmpi_sge
@@ -121,6 +122,7 @@ def TritonOp.arity : TritonOp → Nat
   | .remsi | .remui         => 2
   | .andi  | .ori  | .xori  => 2
   | .shli  | .shrsi | .shrui => 2
+  | .select                  => 3
   | .cmpi_eq | .cmpi_ne     => 2
   | .cmpi_slt | .cmpi_sle   => 2
   | .cmpi_sgt | .cmpi_sge   => 2
