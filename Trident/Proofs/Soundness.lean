@@ -174,8 +174,8 @@ theorem evalInstr_faithful (instr : TritonInstr)
                 [s.block_size] (List.replicate s.block_size x)
                 ss.block_size (fun _ => e)
                 (by intro i hi; rw [hev]; rw [← hbs] at hi; simp [List.getD, List.getElem?_replicate, hi])
-          | _ => sorry -- splat fallback: lookup failed, state unchanged
-      | _ => sorry -- splat fallback: wrong args
+          | _ => sorry -- splat: lookup not scalar
+      | _ => sorry -- splat: wrong args
   | .addi =>
       simp only [h_op, evalOp, symEvalOp, symAdd]
       match h_args : instr.args with
@@ -190,9 +190,9 @@ theorem evalInstr_faithful (instr : TritonInstr)
                   simp only [SymState.lookup, heas, hebs]
                   exact bind_scalar_faithful hp hbs hgs hmem hsc hten instr.result
                     (x + y) (Expr.add ea eb) (by simp [evalExpr, heav, hebv])
-              | _ => sorry
-          | _ => sorry
-      | _ => sorry
+              | _ => sorry -- addi: b not scalar
+          | _ => sorry -- addi: a not scalar
+      | _ => sorry -- addi: wrong args
   | .muli =>
       simp only [h_op, evalOp, symEvalOp]
       match h_args : instr.args with
@@ -207,9 +207,9 @@ theorem evalInstr_faithful (instr : TritonInstr)
                   simp only [SymState.lookup, heas, hebs]
                   exact bind_scalar_faithful hp hbs hgs hmem hsc hten instr.result
                     (x * y) (Expr.mul ea eb) (by simp [evalExpr, heav, hebv])
-              | _ => sorry
-          | _ => sorry
-      | _ => sorry
+              | _ => sorry -- muli: b not scalar
+          | _ => sorry -- muli: a not scalar
+      | _ => sorry -- muli: wrong args
   | .store =>
       simp only [h_op]
       match h_args : instr.args with
