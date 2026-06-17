@@ -162,4 +162,15 @@ theorem getElem?_zip {α β : Type} {l1 : List α} {l2 : List β} {i : Nat}
   congr 1
   simp [List.getElem_zip]
 
+-- splat(c) zipped with range then summed = map (c + ·) range
+theorem replicate_zip_range (bs : Nat) (c : Int) :
+    List.map (fun x : Int × Int => x.fst + x.snd)
+      ((List.replicate bs c).zip (List.map Int.ofNat (List.range bs))) =
+    List.map (fun j => c + Int.ofNat j) (List.range bs) := by
+  apply List.ext_getElem
+  · simp
+  · intro i h1 h2
+    simp only [List.getElem_map, List.getElem_zip, List.getElem_replicate,
+               List.getElem_map, List.getElem_range]
+
 end Trident
