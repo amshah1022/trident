@@ -40,6 +40,7 @@ inductive TritonOp where
   -- ── Integer arithmetic ──
   | constant (val : Int)
   | addi | subi | muli
+  | maxsi | minsi          -- element-wise integer max/min
   | divsi | divui
   | remsi | remui
   | andi  | ori  | xori
@@ -113,6 +114,7 @@ def TritonOp.arity : TritonOp → Nat
   | .addptr           => 2
   | .broadcast        => 2
   | .addi | .subi | .muli   => 2
+  | .maxsi | .minsi          => 2
   | .addf | .subf | .mulf   => 2
   | .divsi | .divui         => 2
   | .divf                   => 2

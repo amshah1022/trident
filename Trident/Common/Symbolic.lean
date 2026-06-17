@@ -4,17 +4,24 @@ import Trident.Common.Memory
 
 namespace Trident
 
+-- ── Symbolic Expression Type ──────────────────────────────────────────────────
+
 inductive Expr : Type
   | lit  : Int → Expr
   | var  : String → Nat → Expr
   | add  : Expr → Expr → Expr
   | mul  : Expr → Expr → Expr
+  | max  : Expr → Expr → Expr
   | load : Expr → Expr
   deriving Repr, DecidableEq
+
+-- ── Symbolic Values ───────────────────────────────────────────────────────────
 
 inductive SymValue : Type
   | scalar : Expr → SymValue
   | tensor : Nat → (Nat → Expr) → SymValue
+
+-- ── Symbolic Machine State ────────────────────────────────────────────────────
 
 structure SymState where
   pid        : Nat
@@ -31,15 +38,52 @@ def SymState.bind (s : SymState) (v : String) (val : SymValue) : SymState :=
 def SymState.writeMem (s : SymState) (addr : Nat) (val : Expr) : SymState :=
   { s with memory := fun a => if a == addr then val else s.memory a }
 
+-- ── Evaluate Expr On Concrete Inputs ─────────────────────────────────────────
+
 def evalExpr (e : Expr) (mem : Nat → Int) : Int :=
   match e with
   | .lit n     => n
   | .var _ i   => mem i
   | .add e1 e2 => evalExpr e1 mem + evalExpr e2 mem
   | .mul e1 e2 => evalExpr e1 mem * evalExpr e2 mem
+  | .max e1 e2 => Max.max (evalExpr e1 mem) (evalExpr e2 mem)
   | .load addr => mem (evalExpr addr mem).natAbs
 
-def symAdd (a b : Option SymValue) (n : Nat) : Option SymValue :=
+-- ── Expression Normalization ──────────────────────────────────────────────────
+
+/-- Simplify concrete arithmetic and resolve loads via memory layout -/
+def normalizeExpr (e : Expr) (mem : Nat → Expr) : Expr :=
+  match e with
+  | .lit n     => .lit n
+  | .var s i   => .var s i
+  | .add e1 e2 =>
+      match normalizeExpr e1 mem, normalizeExpr e2 mem with
+      | .lit a, .lit b => .lit (a + b)
+      | n1,     n2     => .add n1 n2
+  | .mul e1 e2 =>
+      match normalizeExpr e1 mem, normalizeExpr e2 mem with
+      | .lit a, .lit b => .lit (a * b)
+      | n1,     n2     => .mul n1 n2
+  | .max e1 e2 =>
+      match normalizeExpr e1 mem, normalizeExpr e2 mem with
+      | .lit a, .lit b => .lit (Max.max a b)
+      | n1,     n2     => .max n1 n2
+  | .load addr =>
+      match normalizeExpr addr mem with
+      | .lit n => mem n.natAbs
+      | naddr  => .load naddr
+
+-- ── Helper: normalize with vector-add memory layout ──────────────────────────
+
+def normalizeWithMem (e : Expr) (n : Nat) : Expr :=
+  normalizeExpr e (fun addr =>
+    if addr < n then Expr.var "a" addr
+    else if addr < 2 * n then Expr.var "b" (addr - n)
+    else Expr.lit 0)
+
+-- ── Symbolic Operation Semantics ──────────────────────────────────────────────
+
+def symAdd (a b : Option SymValue) : Option SymValue :=
   match a, b with
   | some (SymValue.scalar x), some (SymValue.scalar y) =>
       some (SymValue.scalar (Expr.add x y))
@@ -49,6 +93,18 @@ def symAdd (a b : Option SymValue) (n : Nat) : Option SymValue :=
       some (SymValue.tensor m (fun i => Expr.add (xs i) y))
   | some (SymValue.tensor m xs), some (SymValue.tensor _ ys) =>
       some (SymValue.tensor m (fun i => Expr.add (xs i) (ys i)))
+  | _, _ => none
+
+def symMax (a b : Option SymValue) : Option SymValue :=
+  match a, b with
+  | some (SymValue.scalar x), some (SymValue.scalar y) =>
+      some (SymValue.scalar (Expr.max x y))
+  | some (SymValue.scalar x), some (SymValue.tensor m ys) =>
+      some (SymValue.tensor m (fun i => Expr.max x (ys i)))
+  | some (SymValue.tensor m xs), some (SymValue.scalar y) =>
+      some (SymValue.tensor m (fun i => Expr.max (xs i) y))
+  | some (SymValue.tensor m xs), some (SymValue.tensor _ ys) =>
+      some (SymValue.tensor m (fun i => Expr.max (xs i) (ys i)))
   | _, _ => none
 
 def symEvalOp (op : TritonOp) (args : List String) (s : SymState)
@@ -78,13 +134,14 @@ def symEvalOp (op : TritonOp) (args : List String) (s : SymState)
             some (SymValue.tensor n (fun i => Expr.add base (offs i)))
         | _, _ => none
       | _ => none
-  | .addi =>
-      match args with
-      | [a, b] => symAdd (s.lookup a) (s.lookup b) s.block_size
+  | .addi => match args with
+      | [a, b] => symAdd (s.lookup a) (s.lookup b)
       | _ => none
-  | .addf =>
-      match args with
-      | [a, b] => symAdd (s.lookup a) (s.lookup b) s.block_size
+  | .addf => match args with
+      | [a, b] => symAdd (s.lookup a) (s.lookup b)
+      | _ => none
+  | .maxsi => match args with
+      | [a, b] => symMax (s.lookup a) (s.lookup b)
       | _ => none
   | .muli =>
       match args with
@@ -105,13 +162,14 @@ def symEvalOp (op : TritonOp) (args : List String) (s : SymState)
   | .store => none
   | _ => none
 
+-- ── Symbolic Instruction + Kernel Execution ───────────────────────────────────
+
 def symEvalInstr (instr : TritonInstr) (s : SymState) : SymState :=
   match instr.op with
   | .store =>
       match instr.args with
       | [p, v] => match s.lookup p, s.lookup v with
         | some (SymValue.tensor n addrs), some (SymValue.tensor _ vals) =>
-            -- Write each value to its symbolic address (evaluated to Nat)
             List.foldl (fun st i =>
               let addr := (evalExpr (addrs i) (fun _ => 0)).natAbs
               st.writeMem addr (vals i)) s (List.range n)
@@ -124,6 +182,8 @@ def symEvalInstr (instr : TritonInstr) (s : SymState) : SymState :=
 
 def symEvalKernel (kernel : TritonKernel) (s : SymState) : SymState :=
   List.foldl (fun st instr => symEvalInstr instr st) s kernel
+
+-- ── Vector Add Symbolic Check ─────────────────────────────────────────────────
 
 def symVectorAddInitState (pid bs gs n : Nat) : SymState :=
   { pid        := pid
@@ -143,45 +203,12 @@ def symVectorAddInitState (pid bs gs n : Nat) : SymState :=
       | "bsize"  => some (SymValue.scalar (Expr.lit (Int.ofNat bs)))
       | _        => none }
 
-
--- ── Expression Normalization ──────────────────────────────────────────────────
-
-/-- Evaluate concrete arithmetic in an Expr, simplifying lit+lit etc. -/
-def normalizeExpr (e : Expr) (mem : Nat → Expr) : Expr :=
-  match e with
-  | .lit n     => .lit n
-  | .var s i   => .var s i
-  | .add e1 e2 =>
-      let n1 := normalizeExpr e1 mem
-      let n2 := normalizeExpr e2 mem
-      match n1, n2 with
-      | .lit a, .lit b => .lit (a + b)
-      | _, _           => .add n1 n2
-  | .mul e1 e2 =>
-      let n1 := normalizeExpr e1 mem
-      let n2 := normalizeExpr e2 mem
-      match n1, n2 with
-      | .lit a, .lit b => .lit (a * b)
-      | _, _           => .mul n1 n2
-  | .load addr =>
-      let naddr := normalizeExpr addr mem
-      match naddr with
-      | .lit n => mem n.natAbs   -- resolve load to memory content
-      | _      => .load naddr
-
-/-- Normalize a symbolic output expression using the init state memory -/
-def normalizeWithMem (e : Expr) (n : Nat) : Expr :=
-  normalizeExpr e (fun addr =>
-    if addr < n then Expr.var "a" addr
-    else if addr < 2 * n then Expr.var "b" (addr - n)
-    else Expr.lit 0)
-
 def vectorAddSpecExpr (pid bs i : Nat) : Expr :=
   Expr.add (Expr.var "a" (pid * bs + i)) (Expr.var "b" (pid * bs + i))
 
 def symCheckVectorAdd (kernel : TritonKernel) (pid bs gs n i : Nat) : Bool :=
   let s' := symEvalKernel kernel (symVectorAddInitState pid bs gs n)
-  let raw := s'.memory (2 * n + pid * bs + i)
+  let raw  := s'.memory (2 * n + pid * bs + i)
   let norm := normalizeWithMem raw n
   norm == vectorAddSpecExpr pid bs i
 
