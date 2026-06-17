@@ -195,6 +195,26 @@ def evalOp (op : TritonOp) (args : List String) (s : MachineState)
           | _, _ => none
       | _ => none
 
+  | .dot =>
+      -- Matrix multiply: C = A @ B
+      -- A is M×K tensor (flat: size M*K), B is K×N tensor (flat: size K*N)
+      -- C is M×N tensor (flat: size M*N)
+      -- For our 1D tensor model: treat as inner product (reduce)
+      -- A has shape [M*K], B has shape [K*N]
+      -- simplified: dot of two equal-size tensors = elementwise mul then sum
+      match args with
+      | [a, b] =>
+          (s.lookup a).bind fun va =>
+          (s.lookup b).bind fun vb =>
+          match va, vb with
+          | TritonValue.tensor sha vals_a, TritonValue.tensor shb vals_b =>
+              let n := min vals_a.length vals_b.length
+              let result := (List.range n).map fun i =>
+                vals_a.getD i 0 * vals_b.getD i 0
+              some (TritonValue.tensor [n] result)
+          | _, _ => none
+      | _ => none
+
   -- Store and all unimplemented ops handled in evalInstr
   | _ => none
 

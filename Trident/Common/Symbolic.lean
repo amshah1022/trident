@@ -199,6 +199,12 @@ def symEvalOp (op : TritonOp) (args : List String) (s : SymState)
       | [a, b] => match s.lookup a, s.lookup b with
         | some (SymValue.scalar x), some (SymValue.scalar y) =>
             some (SymValue.scalar (Expr.mul x y))
+        | some (SymValue.tensor n xs), some (SymValue.scalar y) =>
+            some (SymValue.tensor n (fun i => Expr.mul (xs i) y))
+        | some (SymValue.scalar x), some (SymValue.tensor n ys) =>
+            some (SymValue.tensor n (fun i => Expr.mul x (ys i)))
+        | some (SymValue.tensor n xs), some (SymValue.tensor _ ys) =>
+            some (SymValue.tensor n (fun i => Expr.mul (xs i) (ys i)))
         | _, _ => none
       | _ => none
   | .load =>
@@ -228,6 +234,33 @@ def symEvalOp (op : TritonOp) (args : List String) (s : SymState)
           some (SymValue.tensor _ bs_) =>
             some (SymValue.tensor n (fun i => Expr.max (bs_ i) a))
         | _, _, _ => none
+      | _ => none
+
+  | .dot =>
+      -- Matrix multiply: C[i,j] = sum_k(A[i,k] * B[k,j])
+      -- A is M×K (flat size M*K), B is K×N (flat size K*N)
+      -- Output C is M×N (flat size M*N)
+      -- We infer M, N, K from tensor sizes and block_size
+      match args with
+      | [a, b, _] | [a, b] => match s.lookup a, s.lookup b with
+        | some (SymValue.tensor na fa), some (SymValue.tensor nb fb) =>
+            -- Look up K from env (stored as "K_dim" by init state)
+            -- fallback: use nb (K*N where N=1) or block_size
+            let K := match s.env "K_dim" with
+              | some (SymValue.scalar (Expr.lit k)) => k.natAbs
+              | _ => s.block_size
+            let M := na / K
+            let N := if K > 0 then nb / K else 1
+            let MN := M * N
+            -- C[i*N+j] = sum_k(A[i*K+k] * B[k*N+j])
+            let result_exprs := (List.range MN).map fun idx =>
+              let i := idx / N
+              let j := idx % N
+              Expr.reduceSum ((List.range K).map fun k =>
+                Expr.mul (fa (i * K + k)) (fb (k * N + j)))
+            some (SymValue.tensor MN (fun i =>
+              result_exprs.getD i (Expr.lit 0)))
+        | _, _ => none
       | _ => none
 
   | .reduce_sum _ =>
