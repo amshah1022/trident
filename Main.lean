@@ -2,6 +2,7 @@ import Trident
 import Trident.Common.Equiv
 import Trident.Common.Symbolic
 import Trident.Proofs.ReLUProof
+import Trident.Proofs.ReductionProof
 import Cli
 
 open Cli
@@ -10,6 +11,7 @@ open Trident
 def specRegistry : List String := [
   "VectorAdd",
   "ReLU",
+  "Reduction",
 ]
 
 def runVerify (p : Parsed) : IO UInt32 := do
@@ -57,6 +59,19 @@ def runVerify (p : Parsed) : IO UInt32 := do
         return 0
       else
         IO.println s!"✗ Not verified: kernel does not compute max(0, x[i]) for all inputs"
+        return 1
+    | "Reduction" =>
+      let n  := 1024
+      let bs := 1024
+      let gs := 1
+      let allPass := symCheckReduction parsedKernel 0 bs gs n
+      if allPass then
+        IO.println s!"✓ Verified: {kernelPath} computes sum(x[i]) for ALL inputs"
+        IO.println s!"  Method: symbolic simulation over arbitrary arrays"
+        IO.println s!"  Checked {parsedKernel.length} instructions symbolically"
+        return 0
+      else
+        IO.println s!"✗ Not verified: kernel does not compute sum(x[i]) for all inputs"
         return 1
     | _ =>
       IO.println s!"✗ No checker for spec: {specName}"

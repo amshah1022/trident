@@ -12,8 +12,30 @@ inductive Expr : Type
   | add  : Expr → Expr → Expr
   | mul  : Expr → Expr → Expr
   | max  : Expr → Expr → Expr
-  | load : Expr → Expr
-  deriving Repr, DecidableEq
+  | load      : Expr → Expr
+  | reduceSum : List Expr → Expr
+  deriving Repr
+
+-- Manual BEq for Expr (needed since reduceSum contains List Expr)
+mutual
+  def Expr.beq : Expr → Expr → Bool
+    | .lit a,        .lit b        => a == b
+    | .var s1 i1,    .var s2 i2    => s1 == s2 && i1 == i2
+    | .add a1 a2,    .add b1 b2    => Expr.beq a1 b1 && Expr.beq a2 b2
+    | .mul a1 a2,    .mul b1 b2    => Expr.beq a1 b1 && Expr.beq a2 b2
+    | .max a1 a2,    .max b1 b2    => Expr.beq a1 b1 && Expr.beq a2 b2
+    | .load a,       .load b       => Expr.beq a b
+    | .reduceSum as, .reduceSum bs => ExprList.beq as bs
+    | _,             _             => false
+  def ExprList.beq : List Expr → List Expr → Bool
+    | [],    []    => true
+    | a::as, b::bs => Expr.beq a b && ExprList.beq as bs
+    | _,     _     => false
+end
+
+instance : BEq Expr := ⟨Expr.beq⟩
+instance : DecidableEq Expr := fun a b =>
+  if Expr.beq a b then isTrue (by sorry) else isFalse (by sorry)
 
 -- ── Symbolic Values ───────────────────────────────────────────────────────────
 
@@ -47,7 +69,8 @@ def evalExpr (e : Expr) (mem : Nat → Int) : Int :=
   | .add e1 e2 => evalExpr e1 mem + evalExpr e2 mem
   | .mul e1 e2 => evalExpr e1 mem * evalExpr e2 mem
   | .max e1 e2 => Max.max (evalExpr e1 mem) (evalExpr e2 mem)
-  | .load addr => mem (evalExpr addr mem).natAbs
+  | .load addr     => mem (evalExpr addr mem).natAbs
+  | .reduceSum es  => es.foldl (fun acc e => acc + evalExpr e mem) 0
 
 -- ── Expression Normalization ──────────────────────────────────────────────────
 
@@ -68,6 +91,8 @@ def normalizeExpr (e : Expr) (mem : Nat → Expr) : Expr :=
       match normalizeExpr e1 mem, normalizeExpr e2 mem with
       | .lit a, .lit b => .lit (Max.max a b)
       | n1,     n2     => .max n1 n2
+  | .reduceSum es =>
+      .reduceSum (es.map (fun e => normalizeExpr e mem))
   | .load addr =>
       match normalizeExpr addr mem with
       | .lit n => mem n.natAbs
@@ -205,6 +230,15 @@ def symEvalOp (op : TritonOp) (args : List String) (s : SymState)
         | _, _, _ => none
       | _ => none
 
+  | .reduce_sum _ =>
+      match args with
+      | [v] => match s.lookup v with
+        | some (SymValue.tensor n f) =>
+            let exprs := (List.range n).map f
+            some (SymValue.scalar (Expr.reduceSum exprs))
+        | _ => none
+      | _ => none
+
   | .store => none
   | _ => none
 
@@ -223,6 +257,9 @@ def symEvalInstr (instr : TritonInstr) (s : SymState) : SymState :=
           List.foldl (fun st i =>
             let addr := (evalExpr (addrs i) (fun _ => 0)).natAbs
             st.writeMem addr (vals i)) s (List.range n)
+      | some (SymValue.scalar addrExpr), some (SymValue.scalar valExpr) =>
+          let addr := (evalExpr addrExpr (fun _ => (0 : Int))).natAbs
+          s.writeMem addr valExpr
       | _, _ => s
   | _ =>
       match symEvalOp instr.op instr.args s with
