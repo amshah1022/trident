@@ -70,7 +70,7 @@ def runList (_ : Parsed) : IO UInt32 := do
   for spec in specRegistry do
     IO.println s!"  ✓ {spec}"
   IO.println ""
-  IO.println "Coming soon: ReLU, Matmul, LayerNorm, Softmax, FlashAttention"
+  IO.println "Coming soon: Matmul, LayerNorm, Softmax, FlashAttention"
   return 0
 
 def verifyCmd : Cmd := `[Cli|
