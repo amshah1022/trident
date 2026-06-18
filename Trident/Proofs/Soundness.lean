@@ -265,17 +265,43 @@ theorem evalInstr_faithful (instr : TritonInstr)
                   | tensor sh vals =>
                       have h_env_a : s.env a = some (scalar x) := h_la
                       have h_env_b : s.env b = some (tensor sh vals) := h_lb
-                      have ⟨ea, heas, _⟩ := hsc a x h_la
-                      have ⟨gb, hgb, _⟩ := hten b sh vals h_lb
+                      have ⟨ea, heas, heav⟩ := hsc a x h_la
+                      have ⟨gb, hgb, hgbv⟩ := hten b sh vals h_lb
                       simp only [evalInstr, symEvalInstr, h_op, h_args, evalOp, symEvalOp, symAdd,
                                  MachineState.lookup, h_env_a, h_env_b, SymState.lookup, heas, hgb]
-                      sorry -- addi scalar×tensor: needs nb = vals.length in StatesFaithful
+                      conv in (SymValue.tensor vals.length _) =>
+                        rw [show vals.length = (vals.map (· + x)).length from (List.length_map _).symm]
+                      refine bind_tensor_faithful hp hbs hgs hmem hsc hten hnone instr.result
+                        sh (vals.map (· + x)) (fun i => Expr.add ea (gb i)) ?_
+                      intro i hi
+                      simp only [List.length_map] at hi
+                      simp only [evalExpr, heav, hgbv i hi]
+                      simp [List.getD, hi, Int.add_comm]
             | tensor sh_a vals_a =>
                 have h_env_a : s.env a = some (tensor sh_a vals_a) := h_la
-                have ⟨ga, hga, _⟩ := hten a sh_a vals_a h_la
-                simp only [evalInstr, symEvalInstr, h_op, h_args, evalOp, symEvalOp, symAdd,
-                           MachineState.lookup, h_env_a, SymState.lookup, hga]
-                sorry -- fallback: needs bind_tensor_faithful
+                have ⟨ga, hga, hgav⟩ := hten a sh_a vals_a h_la
+                cases h_lb2 : s.lookup b with
+                | none =>
+                    have hss_b : ss.env b = none := hnone b h_lb2
+                    simp only [evalInstr, symEvalInstr, h_op, h_args, evalOp, symEvalOp, symAdd,
+                               MachineState.lookup, h_env_a, h_lb2, SymState.lookup, hga]
+                    simp only [hss_b]; exact hf
+                | some vb2 => cases vb2 with
+                  | tensor sh_b vals_b =>
+                      sorry -- addi tensor×tensor
+                  | scalar y =>
+                      have h_env_b2 : s.env b = some (scalar y) := h_lb2
+                      have ⟨eb, hebs, hebv⟩ := hsc b y h_lb2
+                      simp only [evalInstr, symEvalInstr, h_op, h_args, evalOp, symEvalOp, symAdd,
+                                 MachineState.lookup, h_env_a, h_env_b2, SymState.lookup, hga, hebs]
+                      conv in (SymValue.tensor vals_a.length _) =>
+                        rw [show vals_a.length = (vals_a.map (· + y)).length from (List.length_map _).symm]
+                      refine bind_tensor_faithful hp hbs hgs hmem hsc hten hnone instr.result
+                        sh_a (vals_a.map (· + y)) (fun i => Expr.add (ga i) eb) ?_
+                      intro i hi
+                      simp only [List.length_map] at hi
+                      simp only [evalExpr, hebv, hgav i hi]
+                      simp [List.getD, hi, Int.add_comm]
       | [] =>
           simp only [evalInstr, symEvalInstr, h_op, evalOp, symEvalOp, symAdd]; exact hf
       | [_] =>
