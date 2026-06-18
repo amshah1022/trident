@@ -26,8 +26,8 @@ def StatesFaithful (s : MachineState) (ss : SymState) (mem : Nat → Int) : Prop
   ∧ (∀ v val, s.env v = some (scalar val) →
       ∃ e, ss.env v = some (SymValue.scalar e) ∧ evalExpr e mem = val)
   ∧ (∀ v sh vals, s.env v = some (tensor sh vals) →
-      ∃ n g, ss.env v = some (SymValue.tensor n g)
-        ∧ ∀ i, i < n → evalExpr (g i) mem = vals.getD i 0)
+      ∃ g, ss.env v = some (SymValue.tensor vals.length g)
+        ∧ ∀ i, i < vals.length → evalExpr (g i) mem = vals.getD i 0)
   ∧ (∀ v, s.env v = none → ss.env v = none)
 
 def Expr.isConcrete : Expr → Bool
@@ -79,8 +79,8 @@ private theorem bind_scalar_faithful
     (hsc : ∀ v val, s.env v = some (scalar val) →
         ∃ e, ss.env v = some (SymValue.scalar e) ∧ evalExpr e mem = val)
     (hten : ∀ v sh vals, s.env v = some (tensor sh vals) →
-        ∃ n g, ss.env v = some (SymValue.tensor n g)
-          ∧ ∀ i, i < n → evalExpr (g i) mem = vals.getD i 0)
+        ∃ g, ss.env v = some (SymValue.tensor vals.length g)
+          ∧ ∀ i, i < vals.length → evalExpr (g i) mem = vals.getD i 0)
     (hnone : ∀ v, s.env v = none → ss.env v = none)
     (r : String) (cval : Int) (sval : Expr) (he : evalExpr sval mem = cval) :
     StatesFaithful (s.bind r (scalar cval)) (ss.bind r (SymValue.scalar sval)) mem := by
@@ -113,12 +113,12 @@ private theorem bind_tensor_faithful
     (hsc : ∀ v val, s.env v = some (scalar val) →
         ∃ e, ss.env v = some (SymValue.scalar e) ∧ evalExpr e mem = val)
     (hten : ∀ v sh vals, s.env v = some (tensor sh vals) →
-        ∃ n g, ss.env v = some (SymValue.tensor n g)
-          ∧ ∀ i, i < n → evalExpr (g i) mem = vals.getD i 0)
+        ∃ g, ss.env v = some (SymValue.tensor vals.length g)
+          ∧ ∀ i, i < vals.length → evalExpr (g i) mem = vals.getD i 0)
     (hnone : ∀ v, s.env v = none → ss.env v = none)
-    (r : String) (sh : List Nat) (cvals : List Int) (n : Nat) (g : Nat → Expr)
-    (hg : ∀ i, i < n → evalExpr (g i) mem = cvals.getD i 0) :
-    StatesFaithful (s.bind r (tensor sh cvals)) (ss.bind r (SymValue.tensor n g)) mem := by
+    (r : String) (sh : List Nat) (cvals : List Int) (g : Nat → Expr)
+    (hg : ∀ i, i < cvals.length → evalExpr (g i) mem = cvals.getD i 0) :
+    StatesFaithful (s.bind r (tensor sh cvals)) (ss.bind r (SymValue.tensor cvals.length g)) mem := by
   refine ⟨hp, hbs, hgs, hmem, ?_, ?_, ?_⟩
   · intro v val hv
     simp only [MachineState.bind] at hv; simp only [SymState.bind]
@@ -131,7 +131,7 @@ private theorem bind_tensor_faithful
     · simp only [heq, ↓reduceIte] at hv
       obtain ⟨rfl, rfl⟩ : sh = sh' ∧ cvals = vals' := by
         have := Option.some.inj hv; cases this; simp
-      exact ⟨n, g, by simp [heq], hg⟩
+      exact ⟨g, by simp [heq], hg⟩
     · simp only [heq, ↓reduceIte] at hv ⊢; exact hten v sh' vals' hv
   · intro v hv
     simp only [MachineState.bind] at hv; simp only [SymState.bind]
@@ -188,14 +188,17 @@ theorem evalInstr_faithful (instr : TritonInstr)
         v (Expr.lit v) (by simp [evalExpr])
   | .make_range =>
       simp only [evalInstr, symEvalInstr, h_op, evalOp, symEvalOp]
+      -- symEvalInstr produces SymValue.tensor ss.block_size, evalInstr produces List.range s.block_size
+      -- with hbs : s.block_size = ss.block_size, these match
+      have hlen : (List.map Int.ofNat (List.range s.block_size)).length = ss.block_size := by
+        simp [List.length_map, List.length_range, hbs]
+      rw [← hlen]
       refine bind_tensor_faithful hp hbs hgs hmem hsc hten hnone instr.result
         [s.block_size] ((List.range s.block_size).map Int.ofNat)
-        ss.block_size (fun i => Expr.lit (Int.ofNat i)) ?_
+        (fun i => Expr.lit (Int.ofNat i)) ?_
       intro i hi
-      simp only [evalExpr]
-      rw [range_map_getD]
-      simp only [← hbs] at hi
-      simp [hi]
+      simp only [List.length_map, List.length_range] at hi
+      simp only [evalExpr, range_map_getD, hi, ↓reduceIte]
   | .splat =>
       match h_args : instr.args with
       | [] =>
@@ -214,14 +217,19 @@ theorem evalInstr_faithful (instr : TritonInstr)
                 have ⟨e, hes, hev⟩ := hsc v x h_lv
                 simp only [evalInstr, symEvalInstr, h_op, h_args, evalOp, symEvalOp,
                            MachineState.lookup, h_env_sc, SymState.lookup, hes]
+                have hlen_splat : (List.replicate s.block_size x).length = ss.block_size := by
+                  simp [hbs]
+                rw [← hlen_splat]
                 exact bind_tensor_faithful hp hbs hgs hmem hsc hten hnone instr.result
                   [s.block_size] (List.replicate s.block_size x)
-                  ss.block_size (fun _ => e)
-                  (by intro i hi; rw [hev]; rw [← hbs] at hi
+                  (fun _ => e)
+                  (by intro i hi
+                      simp only [List.length_replicate] at hi
+                      rw [hev]
                       simp [List.getD, List.getElem?_replicate, hi])
             | tensor sh vals =>
                 have h_env_ten : s.env v = some (tensor sh vals) := h_lv
-                have ⟨n, g, hng, _⟩ := hten v sh vals h_lv
+                have ⟨g, hng, _⟩ := hten v sh vals h_lv
                 simp only [evalInstr, symEvalInstr, h_op, h_args, evalOp, symEvalOp,
                            MachineState.lookup, h_env_ten, SymState.lookup, hng]
                 exact hf
@@ -258,13 +266,13 @@ theorem evalInstr_faithful (instr : TritonInstr)
                       have h_env_a : s.env a = some (scalar x) := h_la
                       have h_env_b : s.env b = some (tensor sh vals) := h_lb
                       have ⟨ea, heas, _⟩ := hsc a x h_la
-                      have ⟨nb, gb, hgb, _⟩ := hten b sh vals h_lb
+                      have ⟨gb, hgb, _⟩ := hten b sh vals h_lb
                       simp only [evalInstr, symEvalInstr, h_op, h_args, evalOp, symEvalOp, symAdd,
                                  MachineState.lookup, h_env_a, h_env_b, SymState.lookup, heas, hgb]
                       sorry -- addi scalar×tensor: needs nb = vals.length in StatesFaithful
             | tensor sh_a vals_a =>
                 have h_env_a : s.env a = some (tensor sh_a vals_a) := h_la
-                have ⟨na, ga, hga, _⟩ := hten a sh_a vals_a h_la
+                have ⟨ga, hga, _⟩ := hten a sh_a vals_a h_la
                 simp only [evalInstr, symEvalInstr, h_op, h_args, evalOp, symEvalOp, symAdd,
                            MachineState.lookup, h_env_a, SymState.lookup, hga]
                 sorry -- fallback: needs bind_tensor_faithful
@@ -308,7 +316,7 @@ theorem evalInstr_faithful (instr : TritonInstr)
                       sorry -- fallback: needs bind_tensor_faithful
             | tensor sh_a vals_a =>
                 have h_env_a : s.env a = some (tensor sh_a vals_a) := h_la
-                have ⟨na, ga, hga, _⟩ := hten a sh_a vals_a h_la
+                have ⟨ga, hga, _⟩ := hten a sh_a vals_a h_la
                 simp only [evalInstr, symEvalInstr, h_op, h_args, evalOp, symEvalOp,
                            MachineState.lookup, h_env_a, SymState.lookup, hga]
                 sorry -- muli a-tensor: needs bind_tensor_faithful
@@ -358,7 +366,7 @@ theorem evalInstr_faithful (instr : TritonInstr)
                       sorry -- store v-tensor fallback
             | tensor sh_p vals_p =>
                 have h_env_p_ten : s.env p = some (tensor sh_p vals_p) := h_lp
-                have ⟨np, gp, hgp, _⟩ := hten p sh_p vals_p h_lp
+                have ⟨gp, hgp, _⟩ := hten p sh_p vals_p h_lp
                 simp only [evalInstr, symEvalInstr, h_op, h_args, MachineState.lookup,
                            h_env_p_ten, SymState.lookup, hgp]
                 sorry -- store p-tensor: symEvalInstr produces writeTile
