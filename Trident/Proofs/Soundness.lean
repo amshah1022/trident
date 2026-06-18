@@ -261,7 +261,7 @@ theorem evalInstr_faithful (instr : TritonInstr)
                       have ⟨nb, gb, hgb, _⟩ := hten b sh vals h_lb
                       simp only [evalInstr, symEvalInstr, h_op, h_args, evalOp, symEvalOp, symAdd,
                                  MachineState.lookup, h_env_a, h_env_b, SymState.lookup, heas, hgb]
-                      sorry -- fallback: needs bind_tensor_faithful
+                      sorry -- addi scalar×tensor: needs nb = vals.length in StatesFaithful
             | tensor sh_a vals_a =>
                 have h_env_a : s.env a = some (tensor sh_a vals_a) := h_la
                 have ⟨na, ga, hga, _⟩ := hten a sh_a vals_a h_la
