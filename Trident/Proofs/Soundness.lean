@@ -12,6 +12,10 @@ private theorem range_map_getD (n i : Nat) :
   · simp [List.getD, List.getElem?_map, List.getElem?_range, h]
   · simp [List.getD, List.length_map, List.length_range, Nat.not_lt.mpr h]
 
+private theorem map_add_getD (ys : List Int) (x : Int) (i : Nat) (h : i < ys.length) :
+    (ys.map (· + x)).getD i 0 = ys.getD i 0 + x := by
+  simp [List.getD, List.getElem?_map, h]
+
 def concreteMem (a b : List Int) : Nat → Int := layoutMemory a b
 
 def StatesFaithful (s : MachineState) (ss : SymState) (mem : Nat → Int) : Prop :=
@@ -203,7 +207,7 @@ theorem evalInstr_faithful (instr : TritonInstr)
               have hss : ss.env v = none := hnone v h_lv
               simp only [evalInstr, symEvalInstr, h_op, h_args, evalOp, symEvalOp,
                          MachineState.lookup, h_env_none, SymState.lookup, hss]
-              sorry -- fallback: needs bind_tensor_faithful
+              exact hf
           | some val => cases val with
             | scalar x =>
                 have h_env_sc : s.env v = some (scalar x) := h_lv
@@ -220,7 +224,7 @@ theorem evalInstr_faithful (instr : TritonInstr)
                 have ⟨n, g, hng, _⟩ := hten v sh vals h_lv
                 simp only [evalInstr, symEvalInstr, h_op, h_args, evalOp, symEvalOp,
                            MachineState.lookup, h_env_ten, SymState.lookup, hng]
-                sorry -- fallback: needs bind_tensor_faithful
+                exact hf
       | _ :: _ :: _ =>
           simp only [evalInstr, symEvalInstr, h_op, h_args, evalOp, symEvalOp]; exact hf
   | .addi =>
@@ -264,8 +268,12 @@ theorem evalInstr_faithful (instr : TritonInstr)
                 simp only [evalInstr, symEvalInstr, h_op, h_args, evalOp, symEvalOp, symAdd,
                            MachineState.lookup, h_env_a, SymState.lookup, hga]
                 sorry -- fallback: needs bind_tensor_faithful
-      | _ =>
-          sorry -- fallback: needs bind_tensor_faithful
+      | [] =>
+          simp only [evalInstr, symEvalInstr, h_op, evalOp, symEvalOp, symAdd]; exact hf
+      | [_] =>
+          simp only [evalInstr, symEvalInstr, h_op, evalOp, symEvalOp, symAdd]; exact hf
+      | _ :: _ :: _ :: _ =>
+          simp only [evalInstr, symEvalInstr, h_op, evalOp, symEvalOp, symAdd]; exact hf
   | .muli =>
       simp only [evalInstr, symEvalInstr, h_op, evalOp, symEvalOp]
       match h_args : instr.args with
@@ -304,8 +312,12 @@ theorem evalInstr_faithful (instr : TritonInstr)
                 simp only [evalInstr, symEvalInstr, h_op, h_args, evalOp, symEvalOp,
                            MachineState.lookup, h_env_a, SymState.lookup, hga]
                 sorry -- muli a-tensor: needs bind_tensor_faithful
-      | _ =>
-          sorry -- muli wrong args
+      | [] =>
+          simp only [evalInstr, symEvalInstr, h_op, evalOp, symEvalOp]; exact hf
+      | [_] =>
+          simp only [evalInstr, symEvalInstr, h_op, evalOp, symEvalOp]; exact hf
+      | _ :: _ :: _ :: _ =>
+          simp only [evalInstr, symEvalInstr, h_op, evalOp, symEvalOp]; exact hf
   | .store =>
       match h_args : instr.args with
       | [p, v] =>
