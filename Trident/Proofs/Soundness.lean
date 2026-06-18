@@ -372,6 +372,48 @@ theorem evalInstr_faithful (instr : TritonInstr)
                 sorry -- store p-tensor: symEvalInstr produces writeTile
       | _ =>
           sorry -- store wrong args
+  | .addptr =>
+      match h_args : instr.args with
+      | [p, o] =>
+          cases h_lp : s.lookup p with
+          | none =>
+              have h_env_p : s.env p = none := h_lp
+              have hss_p : ss.env p = none := hnone p h_lp
+              simp only [evalInstr, symEvalInstr, h_op, h_args, evalOp, symEvalOp,
+                         MachineState.lookup, h_env_p, SymState.lookup, hss_p]
+              exact hf
+          | some vp => cases vp with
+            | scalar base =>
+                have h_env_p : s.env p = some (scalar base) := h_lp
+                have ⟨ep, heps, hepv⟩ := hsc p base h_lp
+                cases h_lo : s.lookup o with
+                | none =>
+                    have h_env_o_none : s.env o = none := h_lo
+                    have hss_o : ss.env o = none := hnone o h_lo
+                    simp only [evalInstr, symEvalInstr, h_op, h_args, evalOp, symEvalOp,
+                               MachineState.lookup, h_env_p, h_env_o_none, SymState.lookup, heps, hss_o]
+                    exact hf
+                | some vo => cases vo with
+                  | scalar off =>
+                      have h_env_o : s.env o = some (scalar off) := h_lo
+                      have ⟨eo, heos, heov⟩ := hsc o off h_lo
+                      simp only [evalInstr, symEvalInstr, h_op, h_args, evalOp, symEvalOp,
+                                 MachineState.lookup, h_env_p, h_env_o, SymState.lookup, heps, heos]
+                      exact bind_scalar_faithful hp hbs hgs hmem hsc hten hnone instr.result
+                        (base + off) (Expr.add ep eo) (by simp [evalExpr, hepv, heov])
+                  | tensor sh offs =>
+                      have h_env_o : s.env o = some (tensor sh offs) := h_lo
+                      have ⟨go, hgos, hgov⟩ := hten o sh offs h_lo
+                      simp only [evalInstr, symEvalInstr, h_op, h_args, evalOp, symEvalOp,
+                                 MachineState.lookup, h_env_p, h_env_o, SymState.lookup, heps, hgos]
+                      sorry -- addptr scalar+tensor: length unification issue
+            | tensor sh_p vals_p => sorry -- addptr p-tensor: evalOp returns none but goal not reduced
+      | [] =>
+          simp only [evalInstr, symEvalInstr, h_op, evalOp, symEvalOp, h_args]; exact hf
+      | [_] =>
+          simp only [evalInstr, symEvalInstr, h_op, evalOp, symEvalOp, h_args]; exact hf
+      | _ :: _ :: _ :: _ =>
+          simp only [evalInstr, symEvalInstr, h_op, evalOp, symEvalOp, h_args]; exact hf
   | _ =>
       simp only [evalInstr, symEvalInstr, h_op, evalOp, symEvalOp]
       split
