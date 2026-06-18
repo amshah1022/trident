@@ -138,10 +138,6 @@ Key theorems (all in `Trident/Proofs/Soundness.lean`):
 - `symEval_sound` — symbolic check passing implies concrete correctness
 - `vectorAdd_correct` — **zero `sorry`**, machine-checked vector addition
 
-## Relation to Triton-Sanitizer
-
-[Triton-Sanitizer](https://doi.org/10.1145/3779212.3790241) (ASPLOS '26) verifies that Triton kernel memory accesses are **in-bounds**. Trident verifies that kernel outputs are **mathematically correct**. These are complementary: a kernel can pass Triton-Sanitizer while computing wrong values, and vice versa.
-
 ## Limitations
 
 - Single-block kernels only (no inter-block communication)
@@ -149,18 +145,6 @@ Key theorems (all in `Trident/Proofs/Soundness.lean`):
 - 1D tensor indexing model
 - `evalInstr_faithful` has `sorry` stubs for `load`, `store` address evaluation, `maxsi`, `reduce_sum`, and `dot` — these are architectural gaps in the proof, not the checker
 
-## Citation
-
-If you use Trident in your research:
-
-```bibtex
-@misc{shah2026trident,
-  title     = {Trident: Symbolic Verification of {Triton} {GPU} Kernels in {Lean}~4},
-  author    = {Alina Shah},
-  year      = {2026},
-  url       = {https://github.com/amshah1022/trident}
-}
-```
 
 ## License
 
