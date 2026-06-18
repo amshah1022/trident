@@ -316,9 +316,6 @@ def symVectorAddInitState (pid bs gs n : Nat) : SymState :=
       | "a_base" => some (SymValue.scalar (Expr.lit 0))
       | "b_base" => some (SymValue.scalar (Expr.lit (Int.ofNat n)))
       | "c_base" => some (SymValue.scalar (Expr.lit (Int.ofNat (2 * n))))
-      | "arg0"   => some (SymValue.scalar (Expr.lit 0))
-      | "arg1"   => some (SymValue.scalar (Expr.lit (Int.ofNat n)))
-      | "arg2"   => some (SymValue.scalar (Expr.lit (Int.ofNat (2 * n))))
       | "bsize"  => some (SymValue.scalar (Expr.lit (Int.ofNat bs)))
       | _        => none }
 

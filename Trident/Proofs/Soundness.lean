@@ -5,8 +5,6 @@ import Trident.Proofs.VectorAddProof
 namespace Trident
 open TritonValue
 
-
--- Helper: indexing into (List.range n).map Int.ofNat
 private theorem range_map_getD (n i : Nat) :
     (List.map Int.ofNat (List.range n)).getD i 0 =
     if i < n then Int.ofNat i else 0 := by
@@ -28,7 +26,35 @@ def StatesFaithful (s : MachineState) (ss : SymState) (mem : Nat → Int) : Prop
         ∧ ∀ i, i < n → evalExpr (g i) mem = vals.getD i 0)
   ∧ (∀ v, s.env v = none → ss.env v = none)
 
--- ── Memory Faithfulness Lemmas ────────────────────────────────────────────────
+def Expr.isConcrete : Expr → Bool
+  | .lit _      => true
+  | .var _ _    => false
+  | .load _     => false
+  | .add e1 e2  => e1.isConcrete && e2.isConcrete
+  | .mul e1 e2  => e1.isConcrete && e2.isConcrete
+  | .max e1 e2  => e1.isConcrete && e2.isConcrete
+  | .reduceSum _ => false
+
+theorem evalExpr_concrete (e : Expr) (mem1 mem2 : Nat → Int)
+    (h : e.isConcrete = true) :
+    evalExpr e mem1 = evalExpr e mem2 := by
+  match e with
+  | .lit n => simp [evalExpr]
+  | .var _ _ => simp [Expr.isConcrete] at h
+  | .load _ => simp [Expr.isConcrete] at h
+  | .add e1 e2 =>
+      simp [Expr.isConcrete, Bool.and_eq_true] at h
+      simp [evalExpr, evalExpr_concrete e1 mem1 mem2 h.1,
+                      evalExpr_concrete e2 mem1 mem2 h.2]
+  | .mul e1 e2 =>
+      simp [Expr.isConcrete, Bool.and_eq_true] at h
+      simp [evalExpr, evalExpr_concrete e1 mem1 mem2 h.1,
+                      evalExpr_concrete e2 mem1 mem2 h.2]
+  | .max e1 e2 =>
+      simp [Expr.isConcrete, Bool.and_eq_true] at h
+      simp [evalExpr, evalExpr_concrete e1 mem1 mem2 h.1,
+                      evalExpr_concrete e2 mem1 mem2 h.2]
+  | .reduceSum _ => simp [Expr.isConcrete] at h
 
 theorem writeMem_mem_faithful
     (ss : SymState) (s : MachineState) (mem : Nat → Int)
@@ -40,26 +66,6 @@ theorem writeMem_mem_faithful
   by_cases heq : addr == a
   · simp [heq, hev]
   · simp [heq, hmem addr]
-
-theorem foldl_writeMem_faithful
-    (ss : SymState) (s : MachineState) (mem : Nat → Int)
-    (hmem : ∀ addr, evalExpr (ss.memory addr) mem = s.memory addr)
-    (pairs : List (Nat × Expr × Int))
-    (hagree : ∀ p ∈ pairs, evalExpr p.2.1 mem = p.2.2) :
-    ∀ addr,
-      evalExpr ((pairs.foldl (fun st p => st.writeMem p.1 p.2.1) ss).memory addr) mem =
-      (pairs.foldl (fun st p => st.writeMem p.1 p.2.2) s).memory addr := by
-  intro addr
-  induction pairs generalizing ss s with
-  | nil => simp [hmem]
-  | cons p rest ih =>
-      simp only [List.foldl_cons]
-      apply ih
-      · exact writeMem_mem_faithful ss s mem hmem p.1 p.2.1 p.2.2
-            (hagree p (by simp))
-      · intro q hq; exact hagree q (List.mem_cons.mpr (Or.inr hq))
-
--- ── Bind Lemmas ───────────────────────────────────────────────────────────────
 
 private theorem bind_scalar_faithful
     {s : MachineState} {ss : SymState} {mem : Nat → Int}
@@ -79,7 +85,9 @@ private theorem bind_scalar_faithful
     simp only [MachineState.bind] at hv; simp only [SymState.bind]
     by_cases heq : v == r
     · simp only [heq, ↓reduceIte] at hv
-      have hval : cval = val := by have := Option.some.inj hv; exact congrArg (fun x => match x with | scalar v => v | _ => 0) this
+      have hval : cval = val := by
+        have := Option.some.inj hv
+        exact congrArg (fun x => match x with | scalar v => v | _ => 0) this
       exact ⟨sval, by simp [heq], hval ▸ he⟩
     · simp only [heq, ↓reduceIte] at hv ⊢; exact hsc v val hv
   · intro v sh vals hv
@@ -87,8 +95,7 @@ private theorem bind_scalar_faithful
     by_cases heq : v == r
     · simp only [heq, ↓reduceIte] at hv; simp at hv
     · simp only [heq, ↓reduceIte] at hv ⊢; exact hten v sh vals hv
-  · -- hnone: bind preserves none-preservation
-    intro v hv
+  · intro v hv
     simp only [MachineState.bind] at hv; simp only [SymState.bind]
     by_cases heq : v == r
     · simp only [heq, ↓reduceIte] at hv; simp at hv
@@ -122,14 +129,11 @@ private theorem bind_tensor_faithful
         have := Option.some.inj hv; cases this; simp
       exact ⟨n, g, by simp [heq], hg⟩
     · simp only [heq, ↓reduceIte] at hv ⊢; exact hten v sh' vals' hv
-  · -- hnone: bind preserves none-preservation
-    intro v hv
+  · intro v hv
     simp only [MachineState.bind] at hv; simp only [SymState.bind]
     by_cases heq : v == r
     · simp only [heq, ↓reduceIte] at hv; simp at hv
     · simp only [heq, ↓reduceIte] at hv ⊢; exact hnone v hv
-
--- ── initStates_faithful ───────────────────────────────────────────────────────
 
 theorem initStates_faithful (a b : List Int) (pid bs gs : Nat) :
     StatesFaithful
@@ -152,62 +156,73 @@ theorem initStates_faithful (a b : List Int) (pid bs gs : Nat) :
   · intro v sh vals hv
     simp only [vectorAddInitState] at hv
     split at hv <;> simp_all
-  · -- hnone: vectorAddInitState and symVectorAddInitState agree on none
-    intro v hv
+  · intro v hv
     simp only [vectorAddInitState] at hv
     simp only [symVectorAddInitState]
-    split at hv <;> simp_all
+    split <;> simp_all
 
--- ── evalInstr_faithful ────────────────────────────────────────────────────────
+-- Derive ss.lookup v = none from s.lookup v = none using hnone
+private theorem ss_none_of_none {s : MachineState} {ss : SymState}
+    (hnone : ∀ v, s.env v = none → ss.env v = none)
+    (v : String) (hv : s.lookup v = none) : ss.env v = none :=
+  hnone v hv
 
 theorem evalInstr_faithful (instr : TritonInstr)
     (s : MachineState) (ss : SymState) (mem : Nat → Int)
     (h : StatesFaithful s ss mem) :
     StatesFaithful (evalInstr instr s) (symEvalInstr instr ss) mem := by
-  obtain ⟨hp, hbs, hgs, hmem, hsc, hten⟩ := h
-  have hf : StatesFaithful s ss mem := ⟨hp, hbs, hgs, hmem, hsc, hten⟩
-  -- Helper: when symEvalOp lookup fails, cases on ss side
+  obtain ⟨hp, hbs, hgs, hmem, hsc, hten, hnone⟩ := h
+  have hf : StatesFaithful s ss mem := ⟨hp, hbs, hgs, hmem, hsc, hten, hnone⟩
   match h_op : instr.op with
   | .get_program_id _ =>
       simp only [evalInstr, symEvalInstr, h_op, evalOp, symEvalOp]
-      exact bind_scalar_faithful hp hbs hgs hmem hsc hten instr.result
+      exact bind_scalar_faithful hp hbs hgs hmem hsc hten hnone instr.result
         (Int.ofNat s.pid) (Expr.lit (Int.ofNat ss.pid)) (by simp [evalExpr, hp])
   | .constant v =>
       simp only [evalInstr, symEvalInstr, h_op, evalOp, symEvalOp]
-      exact bind_scalar_faithful hp hbs hgs hmem hsc hten instr.result
+      exact bind_scalar_faithful hp hbs hgs hmem hsc hten hnone instr.result
         v (Expr.lit v) (by simp [evalExpr])
   | .make_range =>
-      sorry
-  | .splat =>
       simp only [evalInstr, symEvalInstr, h_op, evalOp, symEvalOp]
+      refine bind_tensor_faithful hp hbs hgs hmem hsc hten hnone instr.result
+        [s.block_size] ((List.range s.block_size).map Int.ofNat)
+        ss.block_size (fun i => Expr.lit (Int.ofNat i)) ?_
+      intro i hi
+      simp only [evalExpr]
+      rw [range_map_getD]
+      simp only [← hbs] at hi
+      simp [hi]
+  | .splat =>
       match h_args : instr.args with
+      | [] =>
+          simp only [evalInstr, symEvalInstr, h_op, h_args, evalOp, symEvalOp]; exact hf
       | [v] =>
-          simp only [h_args]
           cases h_lv : s.lookup v with
           | none =>
-              simp only [MachineState.lookup, h_lv]
-              cases ss.lookup v with
-              | none => exact hf
-              | some sv => cases sv with | scalar _ => exact hf | tensor _ _ => exact hf
+              have h_env_none : s.env v = none := h_lv
+              have hss : ss.env v = none := hnone v h_lv
+              simp only [evalInstr, symEvalInstr, h_op, h_args, evalOp, symEvalOp,
+                         MachineState.lookup, h_env_none, SymState.lookup, hss]
+              sorry -- fallback: needs bind_tensor_faithful
           | some val => cases val with
             | scalar x =>
+                have h_env_sc : s.env v = some (scalar x) := h_lv
                 have ⟨e, hes, hev⟩ := hsc v x h_lv
-                simp only [MachineState.lookup, h_lv, SymState.lookup, hes]
-                exact bind_tensor_faithful hp hbs hgs hmem hsc hten instr.result
+                simp only [evalInstr, symEvalInstr, h_op, h_args, evalOp, symEvalOp,
+                           MachineState.lookup, h_env_sc, SymState.lookup, hes]
+                exact bind_tensor_faithful hp hbs hgs hmem hsc hten hnone instr.result
                   [s.block_size] (List.replicate s.block_size x)
                   ss.block_size (fun _ => e)
                   (by intro i hi; rw [hev]; rw [← hbs] at hi
                       simp [List.getD, List.getElem?_replicate, hi])
-            | tensor _ _ =>
-                simp only [MachineState.lookup, h_lv]
-                cases ss.lookup v with
-                | none => exact hf
-                | some sv => cases sv with | scalar _ => exact hf | tensor _ _ => exact hf
-      | _ =>
-          simp only [h_args]
-          cases ss.lookup "" with
-          | none => exact hf
-          | some _ => exact hf
+            | tensor sh vals =>
+                have h_env_ten : s.env v = some (tensor sh vals) := h_lv
+                have ⟨n, g, hng, _⟩ := hten v sh vals h_lv
+                simp only [evalInstr, symEvalInstr, h_op, h_args, evalOp, symEvalOp,
+                           MachineState.lookup, h_env_ten, SymState.lookup, hng]
+                sorry -- fallback: needs bind_tensor_faithful
+      | _ :: _ :: _ =>
+          simp only [evalInstr, symEvalInstr, h_op, h_args, evalOp, symEvalOp]; exact hf
   | .addi =>
       simp only [evalInstr, symEvalInstr, h_op, evalOp, symEvalOp, symAdd]
       match h_args : instr.args with
@@ -215,46 +230,42 @@ theorem evalInstr_faithful (instr : TritonInstr)
           simp only [h_args]
           cases h_la : s.lookup a with
           | none =>
-              simp only [MachineState.lookup, h_la]
-              cases ss.lookup a with
-              | none => exact hf
-              | some sv => cases sv with | scalar _ => exact hf | tensor _ _ => exact hf
+              simp only [evalInstr, symEvalInstr, h_op, h_args, evalOp, symEvalOp, symAdd,
+                         MachineState.lookup, h_la]
+              have hss : ss.env a = none := ss_none_of_none hnone a h_la
+              simp only [SymState.lookup, hss]; exact hf
           | some va => cases va with
             | scalar x =>
                 cases h_lb : s.lookup b with
                 | none =>
-                    simp only [MachineState.lookup, h_la, h_lb]
-                    cases ss.lookup a with
-                    | none => exact hf
-                    | some sv => cases sv with
-                      | scalar _ =>
-                          cases ss.lookup b with
-                          | none => exact hf
-                          | some sv2 => cases sv2 with | scalar _ => exact hf | tensor _ _ => exact hf
-                      | tensor _ _ => exact hf
+                    have ⟨ea, heas, _⟩ := hsc a x h_la
+                    simp only [evalInstr, symEvalInstr, h_op, h_args, evalOp, symEvalOp, symAdd,
+                               MachineState.lookup, h_la, h_lb, SymState.lookup, heas]
+                    have hss : ss.env b = none := ss_none_of_none hnone b h_lb
+                    simp only [hss]; exact hf
                 | some vb => cases vb with
                   | scalar y =>
                       have ⟨ea, heas, heav⟩ := hsc a x h_la
                       have ⟨eb, hebs, hebv⟩ := hsc b y h_lb
                       simp only [MachineState.lookup, h_la, h_lb, SymState.lookup, heas, hebs]
-                      exact bind_scalar_faithful hp hbs hgs hmem hsc hten instr.result
+                      exact bind_scalar_faithful hp hbs hgs hmem hsc hten hnone instr.result
                         (x + y) (Expr.add ea eb) (by simp [evalExpr, heav, hebv])
-                  | tensor _ _ =>
-                      simp only [MachineState.lookup, h_la, h_lb]
-                      cases ss.lookup a with
-                      | none => exact hf
-                      | some sv => cases sv with
-                        | scalar _ =>
-                            cases ss.lookup b with
-                            | none => exact hf
-                            | some sv2 => cases sv2 with | scalar _ => exact hf | tensor _ _ => exact hf
-                        | tensor _ _ => exact hf
-            | tensor _ _ =>
-                simp only [MachineState.lookup, h_la]
-                cases ss.lookup a with
-                | none => exact hf
-                | some sv => cases sv with | scalar _ => exact hf | tensor _ _ => exact hf
-      | _ => simp only [h_args]; exact hf
+                  | tensor sh vals =>
+                      have h_env_a : s.env a = some (scalar x) := h_la
+                      have h_env_b : s.env b = some (tensor sh vals) := h_lb
+                      have ⟨ea, heas, _⟩ := hsc a x h_la
+                      have ⟨nb, gb, hgb, _⟩ := hten b sh vals h_lb
+                      simp only [evalInstr, symEvalInstr, h_op, h_args, evalOp, symEvalOp, symAdd,
+                                 MachineState.lookup, h_env_a, h_env_b, SymState.lookup, heas, hgb]
+                      sorry -- fallback: needs bind_tensor_faithful
+            | tensor sh_a vals_a =>
+                have h_env_a : s.env a = some (tensor sh_a vals_a) := h_la
+                have ⟨na, ga, hga, _⟩ := hten a sh_a vals_a h_la
+                simp only [evalInstr, symEvalInstr, h_op, h_args, evalOp, symEvalOp, symAdd,
+                           MachineState.lookup, h_env_a, SymState.lookup, hga]
+                sorry -- fallback: needs bind_tensor_faithful
+      | _ =>
+          sorry -- fallback: needs bind_tensor_faithful
   | .muli =>
       simp only [evalInstr, symEvalInstr, h_op, evalOp, symEvalOp]
       match h_args : instr.args with
@@ -262,108 +273,90 @@ theorem evalInstr_faithful (instr : TritonInstr)
           simp only [h_args]
           cases h_la : s.lookup a with
           | none =>
-              simp only [MachineState.lookup, h_la]
-              cases ss.lookup a with
-              | none => exact hf
-              | some sv => cases sv with | scalar _ => exact hf | tensor _ _ => exact hf
+              simp only [evalInstr, symEvalInstr, h_op, h_args, evalOp, symEvalOp,
+                         MachineState.lookup, h_la]
+              have hss : ss.env a = none := ss_none_of_none hnone a h_la
+              simp only [SymState.lookup, hss]; exact hf
           | some va => cases va with
             | scalar x =>
                 cases h_lb : s.lookup b with
                 | none =>
-                    simp only [MachineState.lookup, h_la, h_lb]
-                    cases ss.lookup a with
-                    | none => exact hf
-                    | some sv => cases sv with
-                      | scalar _ =>
-                          cases ss.lookup b with
-                          | none => exact hf
-                          | some sv2 => cases sv2 with | scalar _ => exact hf | tensor _ _ => exact hf
-                      | tensor _ _ => exact hf
+                    have ⟨ea, heas, _⟩ := hsc a x h_la
+                    simp only [evalInstr, symEvalInstr, h_op, h_args, evalOp, symEvalOp,
+                               MachineState.lookup, h_la, h_lb, SymState.lookup, heas]
+                    have hss : ss.env b = none := ss_none_of_none hnone b h_lb
+                    simp only [hss]; exact hf
                 | some vb => cases vb with
                   | scalar y =>
                       have ⟨ea, heas, heav⟩ := hsc a x h_la
                       have ⟨eb, hebs, hebv⟩ := hsc b y h_lb
                       simp only [MachineState.lookup, h_la, h_lb, SymState.lookup, heas, hebs]
-                      exact bind_scalar_faithful hp hbs hgs hmem hsc hten instr.result
+                      exact bind_scalar_faithful hp hbs hgs hmem hsc hten hnone instr.result
                         (x * y) (Expr.mul ea eb) (by simp [evalExpr, heav, hebv])
                   | tensor _ _ =>
-                      simp only [MachineState.lookup, h_la, h_lb]
-                      cases ss.lookup a with
-                      | none => exact hf
-                      | some sv => cases sv with
-                        | scalar _ =>
-                            cases ss.lookup b with
-                            | none => exact hf
-                            | some sv2 => cases sv2 with | scalar _ => exact hf | tensor _ _ => exact hf
-                        | tensor _ _ => exact hf
-            | tensor _ _ =>
-                simp only [MachineState.lookup, h_la]
-                cases ss.lookup a with
-                | none => exact hf
-                | some sv => cases sv with | scalar _ => exact hf | tensor _ _ => exact hf
-      | _ => simp only [h_args]; exact hf
+                      have ⟨ea, heas, _⟩ := hsc a x h_la
+                      simp only [evalInstr, symEvalInstr, h_op, h_args, evalOp, symEvalOp,
+                                 MachineState.lookup, h_la, h_lb, SymState.lookup, heas]
+                      sorry -- fallback: needs bind_tensor_faithful
+            | tensor sh_a vals_a =>
+                have h_env_a : s.env a = some (tensor sh_a vals_a) := h_la
+                have ⟨na, ga, hga, _⟩ := hten a sh_a vals_a h_la
+                simp only [evalInstr, symEvalInstr, h_op, h_args, evalOp, symEvalOp,
+                           MachineState.lookup, h_env_a, SymState.lookup, hga]
+                sorry -- muli a-tensor: needs bind_tensor_faithful
+      | _ =>
+          sorry -- muli wrong args
   | .store =>
-      simp only [evalInstr, symEvalInstr, h_op]
       match h_args : instr.args with
       | [p, v] =>
-          simp only [h_args]
           cases h_lp : s.lookup p with
           | none =>
-              simp only [MachineState.lookup, h_lp]
-              cases ss.lookup p with
-              | none => exact hf
-              | some sv => cases sv with
-                | scalar _ =>
-                    cases ss.lookup v with
-                    | none => exact hf
-                    | some sv2 => cases sv2 with | scalar _ => exact hf | tensor _ _ => exact hf
-                | tensor _ _ => exact hf
+              have h_env_p_none : s.env p = none := h_lp
+              have hss_p : ss.env p = none := hnone p h_lp
+              simp only [evalInstr, symEvalInstr, h_op, h_args, MachineState.lookup,
+                         h_env_p_none, SymState.lookup, hss_p]
+              exact hf
           | some vp => cases vp with
             | scalar addr =>
                 cases h_lv : s.lookup v with
                 | none =>
-                    simp only [MachineState.lookup, h_lp, h_lv]
-                    cases ss.lookup p with
-                    | none => exact hf
-                    | some sv => cases sv with
-                      | scalar _ =>
-                          cases ss.lookup v with
-                          | none => exact hf
-                          | some sv2 => cases sv2 with | scalar _ => exact hf | tensor _ _ => exact hf
-                      | tensor _ _ => exact hf
+                    have h_env_v_none : s.env v = none := h_lv
+                    have ⟨ep, heps, _⟩ := hsc p addr h_lp
+                    have h_env_p_sc : s.env p = some (scalar addr) := h_lp
+                    simp only [evalInstr, symEvalInstr, h_op, h_args, MachineState.lookup,
+                               h_env_p_sc, h_env_v_none, SymState.lookup, heps]
+                    have hss_v : ss.env v = none := hnone v h_lv
+                    simp only [hss_v]; exact hf
                 | some vv => cases vv with
                   | scalar val =>
+                      have h_env_p_sc : s.env p = some (scalar addr) := h_lp
+                      have h_env_v_sc : s.env v = some (scalar val) := h_lv
                       have ⟨ep, heps, hepv⟩ := hsc p addr h_lp
                       have ⟨ev, hevs, hevv⟩ := hsc v val h_lv
-                      simp only [MachineState.lookup, h_lp, h_lv, SymState.lookup, heps, hevs]
-                      refine ⟨hp, hbs, hgs, ?_, hsc, hten⟩
-                      sorry -- store address
+                      simp only [evalInstr, symEvalInstr, h_op, h_args, MachineState.lookup,
+                                 h_env_p_sc, h_env_v_sc, SymState.lookup, heps, hevs]
+                      refine ⟨hp, hbs, hgs, ?_, hsc, hten, hnone⟩
+                      sorry -- store address: evalExpr ep (fun _ => 0) = addr
                   | tensor _ _ =>
-                      simp only [MachineState.lookup, h_lp, h_lv]
-                      cases ss.lookup p with
-                      | none => exact hf
-                      | some sv => cases sv with
-                        | scalar _ =>
-                            cases ss.lookup v with
-                            | none => exact hf
-                            | some sv2 => cases sv2 with | scalar _ => exact hf | tensor _ _ => exact hf
-                        | tensor _ _ => exact hf
-            | tensor _ _ =>
-                simp only [MachineState.lookup, h_lp]
-                cases ss.lookup p with
-                | none => exact hf
-                | some sv => cases sv with
-                  | scalar _ =>
-                      cases ss.lookup v with
-                      | none => exact hf
-                      | some sv2 => cases sv2 with | scalar _ => exact hf | tensor _ _ => exact hf
-                  | tensor _ _ => exact hf
-      | _ => simp only [h_args]; exact hf
+                      have h_env_p_sc : s.env p = some (scalar addr) := h_lp
+                      have ⟨ep, heps, _⟩ := hsc p addr h_lp
+                      have h_env_v_ten : s.env v = some (tensor _ _) := h_lv
+                      simp only [evalInstr, symEvalInstr, h_op, h_args, MachineState.lookup,
+                                 h_env_p_sc, h_lv, SymState.lookup, heps]
+                      sorry -- store v-tensor fallback
+            | tensor sh_p vals_p =>
+                have h_env_p_ten : s.env p = some (tensor sh_p vals_p) := h_lp
+                have ⟨np, gp, hgp, _⟩ := hten p sh_p vals_p h_lp
+                simp only [evalInstr, symEvalInstr, h_op, h_args, MachineState.lookup,
+                           h_env_p_ten, SymState.lookup, hgp]
+                sorry -- store p-tensor: symEvalInstr produces writeTile
+      | _ =>
+          sorry -- store wrong args
   | _ =>
       simp only [evalInstr, symEvalInstr, h_op, evalOp, symEvalOp]
       split
-      · exact hf
-      · sorry -- remaining ops
+      · sorry -- catch-all none case
+      · sorry -- remaining ops: addptr, load, addf, maxsi etc.
 
 theorem symEvalKernel_faithful (K : TritonKernel)
     (s : MachineState) (ss : SymState) (mem : Nat → Int)
