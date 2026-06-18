@@ -406,7 +406,14 @@ theorem evalInstr_faithful (instr : TritonInstr)
                       have ⟨go, hgos, hgov⟩ := hten o sh offs h_lo
                       simp only [evalInstr, symEvalInstr, h_op, h_args, evalOp, symEvalOp,
                                  MachineState.lookup, h_env_p, h_env_o, SymState.lookup, heps, hgos]
-                      sorry -- addptr scalar+tensor: length unification issue
+                      conv in (SymValue.tensor offs.length _) =>
+                        rw [show offs.length = (offs.map (· + base)).length from (List.length_map _).symm]
+                      refine bind_tensor_faithful hp hbs hgs hmem hsc hten hnone instr.result
+                        sh (offs.map (· + base)) (fun i => Expr.add ep (go i)) ?_
+                      intro i hi
+                      simp only [List.length_map] at hi
+                      simp only [evalExpr, hepv, hgov i hi]
+                      simp [List.getD, hi, Int.add_comm]
             | tensor sh_p vals_p => sorry -- addptr p-tensor: evalOp returns none but goal not reduced
       | [] =>
           simp only [evalInstr, symEvalInstr, h_op, evalOp, symEvalOp, h_args]; exact hf
