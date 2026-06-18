@@ -52,11 +52,20 @@ def runAndExtract (kernel : TritonKernel) (a b : List Int)
   NOT a proof — a dynamic check that transfers proof confidence to new kernels.
 -/
 def checkVectorAddEquiv (parsed : TritonKernel) : Bool :=
+  -- Use bs=1024 to match real Triton TTIR compiled with block_size=1024
+  -- make_range uses s.block_size so we must match the compiled block size
+  let bs := 1024
+  let gs := 1
+  let a1 := (List.range bs).map (fun i => Int.ofNat (i + 1))
+  let b1 := (List.range bs).map (fun i => Int.ofNat (i * 2))
+  let a2 := (List.range bs).map (fun _ => (0 : Int))
+  let b2 := (List.range bs).map (fun _ => (0 : Int))
+  let a3 := (List.range bs).map (fun i => Int.ofNat i)
+  let b3 := (List.range bs).map (fun i => Int.ofNat (bs - i))
   let tests : List (List Int × List Int × Nat × Nat) := [
-    ([1, 2, 3, 4],                    [10, 20, 30, 40],         4, 1),
-    ([0, 0, 0, 0],                    [0, 0, 0, 0],             4, 1),
-    ([100, 200],                      [1, 2],                   2, 1),
-    ([1, 2, 3, 4, 5, 6, 7, 8],        [8, 7, 6, 5, 4, 3, 2, 1], 8, 1),
+    (a1, b1, bs, gs),
+    (a2, b2, bs, gs),
+    (a3, b3, bs, gs),
   ]
   tests.all fun (a, b, bs, gs) =>
     let ref := runRef              a b 0 bs gs

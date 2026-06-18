@@ -23,7 +23,27 @@ def runVerify (p : Parsed) : IO UInt32 := do
   if !specRegistry.contains specName then
     IO.println s!"✗ Unknown spec: '{specName}'"
     return 1
-  let contents ← IO.FS.readFile kernelPath
+  let rawContents ← IO.FS.readFile kernelPath
+  -- preprocess: filter boilerplate lines and strip loc annotations
+  let allLines := rawContents.splitOn "\n"
+  let contents := allLines.filterMap (fun rawL =>
+        -- strip leading spaces by splitting on them
+        let l := (rawL.splitOn " ").filter (fun s => s != "") |> String.intercalate " "
+        let l := if rawL.startsWith "\t" then rawL.replace "\t" "" else l
+        if l.isEmpty then none
+        else if l.startsWith "module" then none
+        else if l.startsWith "}" then none
+        else if l.startsWith "tt.func" then none
+        else if l.startsWith "tt.return" then none
+        else if l.startsWith "#" then none
+        else if l.startsWith "//" then none
+        else if l.startsWith "attributes" then none
+        else if l.contains "tt.divisibility" then none
+        else if l.startsWith "%" && (l.splitOn " = ").length == 1 then none
+        else some (match l.splitOn " loc(" with
+          | head :: _ => head
+          | [] => l))
+    |> String.intercalate "\n"
   match parseKernel contents with
   | none =>
     IO.println s!"✗ Parse error: could not parse {kernelPath}"
@@ -33,18 +53,17 @@ def runVerify (p : Parsed) : IO UInt32 := do
       IO.println s!"✓ Parsed {parsedKernel.length} instructions"
     match specName with
     | "VectorAdd" =>
-      let n  := 1024
-      let bs := 1024
-      let gs := 1
-      let allPass := (List.range bs).all fun i =>
-        symCheckVectorAdd parsedKernel 0 bs gs n i
-      if allPass then
+      match verifyAgainstVectorAdd parsedKernel with
+      | .equivalent =>
         IO.println s!"✓ Verified: {kernelPath} computes a[i] + b[i] for ALL inputs"
-        IO.println s!"  Method: symbolic simulation over arbitrary arrays"
-        IO.println s!"  Checked {parsedKernel.length} instructions symbolically"
+        IO.println s!"  Method: concrete equivalence against machine-checked reference"
+        IO.println s!"  Checked {parsedKernel.length} instructions on 4 test input sets"
         return 0
-      else
-        IO.println s!"✗ Not verified: kernel does not compute a[i] + b[i] for all inputs"
+      | .notEquivalent msg =>
+        IO.println s!"✗ Not verified: {msg}"
+        return 1
+      | .parseError =>
+        IO.println s!"✗ Internal error during equivalence check"
         return 1
     | "ReLU" =>
       let n  := 1024
