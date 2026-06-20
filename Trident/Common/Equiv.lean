@@ -30,6 +30,10 @@ def parsedInitState (a b : List Int) (pid bs gs : Nat) : MachineState :=
       | "b_base" => some (TritonValue.scalar (Int.ofNat n))
       | "c_base" => some (TritonValue.scalar (Int.ofNat (2 * n)))
       | "bsize"  => some (TritonValue.scalar (Int.ofNat bs))
+      | "x_ptr"      => some (TritonValue.scalar 0)
+      | "y_ptr"      => some (TritonValue.scalar (Int.ofNat n))
+      | "output_ptr" => some (TritonValue.scalar (Int.ofNat (2 * n)))
+      | "n_elements" => some (TritonValue.scalar (Int.ofNat n))
       | _        => none }
 
 /-- Run reference kernel and extract output tile -/
@@ -93,12 +97,12 @@ def parsedReductionInitState (x : List Int) (pid bs gs : Nat) : MachineState :=
   , grid_size  := gs
   , memory     := fun addr => if addr < n then x.getD addr 0 else 0
   , env        := fun v => match v with
-      | "x_ptr"      => some (TritonValue.scalar 0)
       | "out_ptr"    => some (TritonValue.scalar (Int.ofNat n))
       | "n_elements" => some (TritonValue.scalar (Int.ofNat n))
       | "x_base"     => some (TritonValue.scalar 0)
       | "out_base"   => some (TritonValue.scalar (Int.ofNat n))
       | "bsize"      => some (TritonValue.scalar (Int.ofNat bs))
+      | "x_ptr"      => some (TritonValue.scalar 0)
       | _            => none }
 
 /-- Run reference reduction kernel -/

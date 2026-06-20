@@ -60,11 +60,14 @@ def evalOp (op : TritonOp) (args : List String) (s : MachineState)
   | .load =>
       match args with
       | [p] => match s.lookup p with
-        | some (scalar addr) =>
-            some (scalar (s.readMem addr.natAbs))
-        | some (tensor sh addrs) =>
-            some (tensor sh (addrs.map fun a => s.readMem a.natAbs))
+        | some (scalar addr) => some (scalar (s.readMem addr.natAbs))
+        | some (tensor sh addrs) => some (tensor sh (addrs.map fun a => s.readMem a.natAbs))
         | _ => none
+      | [p, m] => match s.lookup p, s.lookup m with
+        | some (tensor sh addrs), some (tensor _ masks) =>
+            some (tensor sh ((addrs.zip masks).map fun (a, mk) =>
+              if mk != 0 then s.readMem a.natAbs else 0))
+        | _, _ => none
       | _ => none
 
   | .addi =>
@@ -230,11 +233,15 @@ def evalInstr (instr : TritonInstr) (s : MachineState) : MachineState :=
   | .store =>
       match instr.args with
       | [p, v] => match s.lookup p, s.lookup v with
-        | some (scalar addr), some (scalar val) =>
-            s.writeMem addr.natAbs val
-        | some (tensor _ addrs), some (tensor _ vals) =>
-            s.writeTile (addrs.map Int.natAbs) vals
+        | some (scalar addr), some (scalar val) => s.writeMem addr.natAbs val
+        | some (tensor _ addrs), some (tensor _ vals) => s.writeTile (addrs.map Int.natAbs) vals
         | _, _ => s
+      | [p, v, m] => match s.lookup p, s.lookup v, s.lookup m with
+        | some (tensor _ addrs), some (tensor _ vals), some (tensor _ masks) =>
+            let kept := ((addrs.zip vals).zip masks).filterMap fun ((a, v), mk) =>
+              if mk != 0 then some (a, v) else none
+            s.writeTile (kept.map (·.1.natAbs)) (kept.map (·.2))
+        | _, _, _ => s
       | _ => s
   | _ =>
       match evalOp instr.op instr.args s with

@@ -44,19 +44,6 @@ def runVerify (p : Parsed) : IO UInt32 := do
           | head :: _ => head
           | [] => l))
     |> String.intercalate "\n"
-  -- discards rather than models the mask
-  let stripLoadMask (l : String) : String :=
-    if l.contains "tt.load" && l.contains "," then
-      match l.splitOn " : " with
-      | argsPart :: typeRest =>
-          let firstArg := match argsPart.splitOn "," with
-            | head :: _ => head
-            | [] => argsPart
-          if typeRest.isEmpty then firstArg
-          else firstArg ++ " : " ++ String.intercalate " : " typeRest
-      | [] => l
-    else l
-  let contents := contents.splitOn "\n" |>.map stripLoadMask |> String.intercalate "\n"
   -- Collapse multi-line tt.reduce blocks into single reduce_sum instructions
   let contentLines := contents.splitOn "\n"
   let rec collapseReduce (lines : List String) (acc : List String) (inReduce : Bool) (reduceResult : String) (reduceOperand : String) : List String :=
