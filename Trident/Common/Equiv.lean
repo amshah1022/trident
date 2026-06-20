@@ -7,6 +7,7 @@
 import Trident.Target.Semantics
 import Trident.Compiler
 import Trident.Proofs.VectorAddProof
+import Trident.Proofs.ReductionProof
 
 namespace Trident
 
@@ -83,5 +84,53 @@ def verifyAgainstVectorAdd (parsed : TritonKernel) : EquivResult :=
   if checkVectorAddEquiv parsed
   then .equivalent
   else .notEquivalent "outputs differ on test inputs"
+
+/-- Init state for parsed real TTIR reduction kernels -/
+def parsedReductionInitState (x : List Int) (pid bs gs : Nat) : MachineState :=
+  let n := x.length
+  { pid        := pid
+  , block_size := bs
+  , grid_size  := gs
+  , memory     := fun addr => if addr < n then x.getD addr 0 else 0
+  , env        := fun v => match v with
+      | "x_ptr"      => some (TritonValue.scalar 0)
+      | "out_ptr"    => some (TritonValue.scalar (Int.ofNat n))
+      | "n_elements" => some (TritonValue.scalar (Int.ofNat n))
+      | "x_base"     => some (TritonValue.scalar 0)
+      | "out_base"   => some (TritonValue.scalar (Int.ofNat n))
+      | "bsize"      => some (TritonValue.scalar (Int.ofNat bs))
+      | _            => none }
+
+/-- Run reference reduction kernel -/
+def runReductionRef (x : List Int) (pid bs gs : Nat) : Int :=
+  let s  := { pid := pid, block_size := bs, grid_size := gs
+            , memory := fun addr => if addr < x.length then x.getD addr 0 else 0
+            , env := fun v => match v with
+                | "x_base"  => some (TritonValue.scalar 0)
+                | "out_base"=> some (TritonValue.scalar (Int.ofNat x.length))
+                | "bsize"   => some (TritonValue.scalar (Int.ofNat bs))
+                | _ => none }
+  let s' := evalKernel compiledReduction s
+  s'.readMem x.length
+
+/-- Run parsed reduction kernel -/
+def runReductionParsed (kernel : TritonKernel) (x : List Int) (pid bs gs : Nat) : Int :=
+  let s  := parsedReductionInitState x pid bs gs
+  let s' := evalKernel kernel s
+  s'.readMem x.length
+
+/-- Check reduction by comparing against the mathematical spec directly -/
+def checkReductionEquiv (parsed : TritonKernel) : Bool :=
+  let bs := 1024
+  let gs := 1
+  -- test: output should equal x.foldl (· + ·) 0
+  let x1 := (List.range bs).map (fun i => Int.ofNat (i + 1))
+  let x2 := (List.range bs).map (fun _ => (1 : Int))
+  let x3 := (List.range bs).map (fun i => Int.ofNat i)
+  let tests := [x1, x2, x3]
+  tests.all fun x =>
+    let expected := x.foldl (· + ·) 0
+    let got := runReductionParsed parsed x 0 bs gs
+    expected == got
 
 end Trident
