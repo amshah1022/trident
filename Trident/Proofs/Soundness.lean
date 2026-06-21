@@ -6,6 +6,276 @@ import Trident.Common.Equiv
 namespace Trident
 open TritonValue
 
+
+theorem parsedVectorAddTutorial_s10_has_tensors (a b : List Int) (pid bs gs : Nat)
+    (h_cov : (pid + 1) * 1024 ≤ a.length) :
+    ∃ addrs masks,
+      (evalKernel (parsedVectorAddTutorial.take 10) (parsedInitState a b pid bs gs)).lookup "x_3"
+        = some (TritonValue.tensor [1024] addrs) ∧
+      (evalKernel (parsedVectorAddTutorial.take 10) (parsedInitState a b pid bs gs)).lookup "mask_2"
+        = some (TritonValue.tensor [1024] masks) ∧
+      addrs.length = 1024 ∧ masks.length = 1024 ∧
+      (∀ i, i < 1024 → masks.getD i 0 ≠ 0) := by
+  obtain ⟨xs, ys, h_lx, h_ly, hxlen, hylen, hxval, hyval⟩ :=
+    parsedVectorAddTutorial_s7_has_tensors a b pid bs gs
+  refine ⟨_, (xs.zip ys).map (fun (x, y) => if x < y then (1:Int) else 0), rfl, ?_,
+    by simp [parsedVectorAddTutorial, parsedInitState, evalKernel, evalInstr, evalOp,
+       List.take, MachineState.bind, MachineState.lookup, TritonValue.zipWith, List.foldl],
+    by simp [hxlen, hylen], fun i hi => ?_⟩
+  · simp only [parsedVectorAddTutorial, parsedInitState, evalKernel, evalInstr, evalOp,
+               List.take, MachineState.bind, MachineState.lookup, TritonValue.zipWith, List.foldl]
+    rw [show (evalKernel (parsedVectorAddTutorial.take 7) (parsedInitState a b pid bs gs)).lookup "offsets_1"
+        = some (TritonValue.tensor [1024] xs) from h_lx,
+        show (evalKernel (parsedVectorAddTutorial.take 7) (parsedInitState a b pid bs gs)).lookup "mask"
+        = some (TritonValue.tensor [1024] ys) from h_ly]
+  · have hi' : i < xs.length := hxlen ▸ hi
+    have hi2' : i < ys.length := hylen ▸ hi
+    have hlt : xs.getD i 0 < ys.getD i 0 := by
+      rw [hxval i hi, hyval i hi]; omega
+    simp only [List.getD, List.getElem?_map, List.getElem?_zip, hi', hi2', Option.map_some]
+    have : xs.getD i 0 = xs[i]'hi' := (List.getD_eq_getElem xs 0 hi').symm
+    have h2 : ys.getD i 0 = ys[i]'hi2' := (List.getD_eq_getElem ys 0 hi2').symm
+    rw [this, h2] at hlt
+    simp [hlt]
+
+
+theorem parsedVectorAddTutorial_s13_faithful (a b : List Int) (pid bs gs : Nat)
+    (h_cov : (pid + 1) * 1024 ≤ a.length) :
+    StatesFaithful
+      (evalKernel (parsedVectorAddTutorial.take 13) (parsedInitState a b pid bs gs))
+      (symEvalKernel (parsedVectorAddTutorial.take 13) (symParsedVectorAddInitState pid bs gs a.length))
+      (concreteMem a b) := by
+  have step := symEvalKernel_faithful
+    [{ result := "y", op := .splat [1024], args := ["y_ptr"] },
+     { result := "y_5", op := .addptr, args := ["y", "offsets_1"] }]
+    (evalKernel (parsedVectorAddTutorial.take 11) (parsedInitState a b pid bs gs))
+    (symEvalKernel (parsedVectorAddTutorial.take 11) (symParsedVectorAddInitState pid bs gs a.length))
+    (concreteMem a b)
+    (parsedVectorAddTutorial_s11_faithful a b pid bs gs h_cov)
+  simpa [parsedVectorAddTutorial, evalKernel, symEvalKernel, List.take, List.foldl] using step
+
+theorem parsedVectorAddTutorial_s13_memory_unchanged (a b : List Int) (pid bs gs : Nat) :
+    (evalKernel (parsedVectorAddTutorial.take 13) (parsedInitState a b pid bs gs)).memory
+      = (parsedInitState a b pid bs gs).memory := by
+  apply evalKernel_memory_unchanged_of_no_store
+  intro instr hi
+  simp only [parsedVectorAddTutorial, List.take] at hi
+  rcases hi with rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl <;> exact ⟨by decide, by decide⟩
+
+theorem parsedVectorAddTutorial_s13_has_tensors (a b : List Int) (pid bs gs : Nat)
+    (h_cov : (pid + 1) * 1024 ≤ a.length) :
+    ∃ addrs masks,
+      (evalKernel (parsedVectorAddTutorial.take 13) (parsedInitState a b pid bs gs)).lookup "y_5"
+        = some (TritonValue.tensor [1024] addrs) ∧
+      (evalKernel (parsedVectorAddTutorial.take 13) (parsedInitState a b pid bs gs)).lookup "mask_2"
+        = some (TritonValue.tensor [1024] masks) ∧
+      addrs.length = 1024 ∧ masks.length = 1024 ∧
+      (∀ i, i < 1024 → masks.getD i 0 ≠ 0) := by
+  obtain ⟨xs, ys, h_lx, h_ly, hxlen, hylen, hxval, hyval⟩ :=
+    parsedVectorAddTutorial_s7_has_tensors a b pid bs gs
+  refine ⟨_, (xs.zip ys).map (fun (x, y) => if x < y then (1:Int) else 0), rfl, ?_,
+    by simp [parsedVectorAddTutorial, parsedInitState, evalKernel, evalInstr, evalOp,
+       List.take, MachineState.bind, MachineState.lookup, TritonValue.zipWith, List.foldl],
+    by simp [hxlen, hylen], fun i hi => ?_⟩
+  · simp only [parsedVectorAddTutorial, parsedInitState, evalKernel, evalInstr, evalOp,
+               List.take, MachineState.bind, MachineState.lookup, TritonValue.zipWith, List.foldl]
+    rw [show (evalKernel (parsedVectorAddTutorial.take 7) (parsedInitState a b pid bs gs)).lookup "offsets_1"
+        = some (TritonValue.tensor [1024] xs) from h_lx,
+        show (evalKernel (parsedVectorAddTutorial.take 7) (parsedInitState a b pid bs gs)).lookup "mask"
+        = some (TritonValue.tensor [1024] ys) from h_ly]
+  · have hi' : i < xs.length := hxlen ▸ hi
+    have hi2' : i < ys.length := hylen ▸ hi
+    have hlt : xs.getD i 0 < ys.getD i 0 := by
+      rw [hxval i hi, hyval i hi]; omega
+    simp only [List.getD, List.getElem?_map, List.getElem?_zip, hi', hi2', Option.map_some]
+    have : xs.getD i 0 = xs[i]'hi' := (List.getD_eq_getElem xs 0 hi').symm
+    have h2 : ys.getD i 0 = ys[i]'hi2' := (List.getD_eq_getElem ys 0 hi2').symm
+    rw [this, h2] at hlt
+    simp [hlt]
+
+theorem parsedVectorAddTutorial_s14_faithful (a b : List Int) (pid bs gs : Nat)
+    (h_cov : (pid + 1) * 1024 ≤ a.length) :
+    StatesFaithful
+      (evalKernel (parsedVectorAddTutorial.take 14) (parsedInitState a b pid bs gs))
+      (symEvalKernel (parsedVectorAddTutorial.take 14) (symParsedVectorAddInitState pid bs gs a.length))
+      (concreteMem a b) := by
+  obtain ⟨hp, hbs, hgs, hmem, hsc, hten, hnone⟩ := parsedVectorAddTutorial_s13_faithful a b pid bs gs h_cov
+  obtain ⟨addrs, masks, h_la, h_lm, halen, hmlen, hall⟩ :=
+    parsedVectorAddTutorial_s13_has_tensors a b pid bs gs h_cov
+  have hmem_raw : (evalKernel (parsedVectorAddTutorial.take 13) (parsedInitState a b pid bs gs)).memory
+      = concreteMem a b := by
+    rw [parsedVectorAddTutorial_s13_memory_unchanged]; rfl
+  have step := load_tensor_masked_faithful_when_all_true
+    hp hbs hgs hmem hsc hten hnone hmem_raw
+    { result := "y_6", op := .load, args := ["y_5", "mask_2"] } "y_5" "mask_2" rfl rfl
+    [1024] addrs masks h_la h_lm (by rw [halen, hmlen]) hall
+  simpa [parsedVectorAddTutorial, evalKernel, symEvalKernel, List.take, List.foldl] using step
+
+theorem parsedVectorAddTutorial_s15_faithful (a b : List Int) (pid bs gs : Nat)
+    (h_cov : (pid + 1) * 1024 ≤ a.length) :
+    StatesFaithful
+      (evalKernel (parsedVectorAddTutorial.take 15) (parsedInitState a b pid bs gs))
+      (symEvalKernel (parsedVectorAddTutorial.take 15) (symParsedVectorAddInitState pid bs gs a.length))
+      (concreteMem a b) := by
+  have step := evalInstr_faithful { result := "output", op := .addf, args := ["x_4", "y_6"] }
+    (evalKernel (parsedVectorAddTutorial.take 14) (parsedInitState a b pid bs gs))
+    (symEvalKernel (parsedVectorAddTutorial.take 14) (symParsedVectorAddInitState pid bs gs a.length))
+    (concreteMem a b)
+    (parsedVectorAddTutorial_s14_faithful a b pid bs gs h_cov)
+  simpa [parsedVectorAddTutorial, evalKernel, symEvalKernel, List.take, List.foldl] using step
+
+theorem parsedVectorAddTutorial_s17_faithful (a b : List Int) (pid bs gs : Nat)
+    (h_cov : (pid + 1) * 1024 ≤ a.length) :
+    StatesFaithful
+      (evalKernel (parsedVectorAddTutorial.take 17) (parsedInitState a b pid bs gs))
+      (symEvalKernel (parsedVectorAddTutorial.take 17) (symParsedVectorAddInitState pid bs gs a.length))
+      (concreteMem a b) := by
+  have step := symEvalKernel_faithful
+    [{ result := "0", op := .splat [1024], args := ["output_ptr"] },
+     { result := "1", op := .addptr, args := ["0", "offsets_1"] }]
+    (evalKernel (parsedVectorAddTutorial.take 15) (parsedInitState a b pid bs gs))
+    (symEvalKernel (parsedVectorAddTutorial.take 15) (symParsedVectorAddInitState pid bs gs a.length))
+    (concreteMem a b)
+    (parsedVectorAddTutorial_s15_faithful a b pid bs gs h_cov)
+  simpa [parsedVectorAddTutorial, evalKernel, symEvalKernel, List.take, List.foldl] using step
+
+theorem parsedVectorAddTutorial_s17_store_setup (a b : List Int) (pid bs gs : Nat)
+    (h_cov : (pid + 1) * 1024 ≤ a.length) :
+    ∃ addrs vals masks,
+      (evalKernel (parsedVectorAddTutorial.take 17) (parsedInitState a b pid bs gs)).lookup "1"
+        = some (TritonValue.tensor [1024] addrs) ∧
+      (evalKernel (parsedVectorAddTutorial.take 17) (parsedInitState a b pid bs gs)).lookup "output"
+        = some (TritonValue.tensor [1024] vals) ∧
+      (evalKernel (parsedVectorAddTutorial.take 17) (parsedInitState a b pid bs gs)).lookup "mask_2"
+        = some (TritonValue.tensor [1024] masks) ∧
+      addrs.length = 1024 ∧ vals.length = 1024 ∧ masks.length = 1024 ∧
+      (∀ i, i < 1024 → masks.getD i 0 ≠ 0) ∧
+      ∃ g, (symEvalKernel (parsedVectorAddTutorial.take 17) (symParsedVectorAddInitState pid bs gs a.length)).env "1"
+        = some (SymValue.tensor addrs.length g) ∧
+      ∀ i, (g i).isConcrete = true := by
+  obtain ⟨xs, ys, h_lx, h_ly, hxlen, hylen, hxval, hyval⟩ :=
+    parsedVectorAddTutorial_s7_has_tensors a b pid bs gs
+  refine ⟨_, _, (xs.zip ys).map (fun (x, y) => if x < y then (1:Int) else 0),
+    rfl, rfl, ?_, rfl, rfl, by simp [hxlen, hylen], fun i hi => ?_, _, rfl, fun i => ?_⟩
+  · simp only [parsedVectorAddTutorial, parsedInitState, evalKernel, evalInstr, evalOp,
+               List.take, MachineState.bind, MachineState.lookup, TritonValue.zipWith, List.foldl]
+    rw [show (evalKernel (parsedVectorAddTutorial.take 7) (parsedInitState a b pid bs gs)).lookup "offsets_1"
+        = some (TritonValue.tensor [1024] xs) from h_lx,
+        show (evalKernel (parsedVectorAddTutorial.take 7) (parsedInitState a b pid bs gs)).lookup "mask"
+        = some (TritonValue.tensor [1024] ys) from h_ly]
+  · have hi' : i < xs.length := hxlen ▸ hi
+    have hi2' : i < ys.length := hylen ▸ hi
+    have hlt : xs.getD i 0 < ys.getD i 0 := by
+      rw [hxval i hi, hyval i hi]; omega
+    simp only [List.getD, List.getElem?_map, List.getElem?_zip, hi', hi2', Option.map_some]
+    have : xs.getD i 0 = xs[i]'hi' := (List.getD_eq_getElem xs 0 hi').symm
+    have h2 : ys.getD i 0 = ys[i]'hi2' := (List.getD_eq_getElem ys 0 hi2').symm
+    rw [this, h2] at hlt
+    simp [hlt]
+  · simp only [parsedVectorAddTutorial, symParsedVectorAddInitState, symEvalKernel, symEvalInstr,
+               symEvalOp, symAdd, SymState.bind, SymState.lookup, List.take, List.foldl]
+    simp [Expr.isConcrete]
+
+theorem parsedVectorAddTutorial_full_faithful (a b : List Int) (pid bs gs : Nat)
+    (h_cov : (pid + 1) * 1024 ≤ a.length) :
+    StatesFaithful
+      (evalKernel parsedVectorAddTutorial (parsedInitState a b pid bs gs))
+      (symEvalKernel parsedVectorAddTutorial (symParsedVectorAddInitState pid bs gs a.length))
+      (concreteMem a b) := by
+  obtain ⟨hp, hbs, hgs, hmem, hsc, hten, hnone⟩ := parsedVectorAddTutorial_s17_faithful a b pid bs gs h_cov
+  obtain ⟨addrs, vals, masks, h_lp, h_lv, h_lm, halen, hvlen, hmlen, hall, g, hgp, hconcrete⟩ :=
+    parsedVectorAddTutorial_s17_store_setup a b pid bs gs h_cov
+  obtain ⟨gv, hgv_corr, hgv_vals⟩ := hten "output" [1024] vals h_lv
+  obtain ⟨g', hgp', haddr'⟩ := hten "1" [1024] addrs h_lp
+  have hgeq : g' = g := by
+    have := hgp'.symm.trans hgp
+    injection this with h1 h2
+  have haddr := hgeq ▸ haddr'
+  have step := store_tensor_masked_faithful_when_all_true
+    hp hbs hgs hmem hsc hten hnone
+    { result := "_", op := .store, args := ["1", "output", "mask_2"] } "1" "output" "mask_2"
+    rfl rfl [1024] addrs vals masks h_lp h_lv h_lm
+    (by rw [halen, hvlen]) (by rw [halen, hmlen]) hall
+    g gv hgp hgv_corr (fun i _ => hconcrete i) haddr hgv_vals
+  simpa [parsedVectorAddTutorial, evalKernel, symEvalKernel, List.take, List.foldl] using step
+
+theorem parsedVectorAddTutorial_s11_faithful (a b : List Int) (pid bs gs : Nat)
+    (h_cov : (pid + 1) * 1024 ≤ a.length) :
+    StatesFaithful
+      (evalKernel (parsedVectorAddTutorial.take 11) (parsedInitState a b pid bs gs))
+      (symEvalKernel (parsedVectorAddTutorial.take 11) (symParsedVectorAddInitState pid bs gs a.length))
+      (concreteMem a b) := by
+  obtain ⟨hp, hbs, hgs, hmem, hsc, hten, hnone⟩ := parsedVectorAddTutorial_s10_faithful a b pid bs gs h_cov
+  obtain ⟨addrs, masks, h_la, h_lm, halen, hmlen, hall⟩ :=
+    parsedVectorAddTutorial_s10_has_tensors a b pid bs gs h_cov
+  have hmem_raw : (evalKernel (parsedVectorAddTutorial.take 10) (parsedInitState a b pid bs gs)).memory
+      = concreteMem a b := by
+    rw [parsedVectorAddTutorial_s10_memory_unchanged]; rfl
+  have step := load_tensor_masked_faithful_when_all_true
+    hp hbs hgs hmem hsc hten hnone hmem_raw
+    { result := "x_4", op := .load, args := ["x_3", "mask_2"] } "x_3" "mask_2" rfl rfl
+    [1024] addrs masks h_la h_lm (by rw [halen, hmlen]) hall
+  simpa [parsedVectorAddTutorial, evalKernel, symEvalKernel, List.take, List.foldl] using step
+
+theorem parsedVectorAddTutorial_s7_has_tensors (a b : List Int) (pid bs gs : Nat) :
+    ∃ xs ys,
+      (evalKernel (parsedVectorAddTutorial.take 7) (parsedInitState a b pid bs gs)).lookup "offsets_1"
+        = some (TritonValue.tensor [1024] xs) ∧
+      (evalKernel (parsedVectorAddTutorial.take 7) (parsedInitState a b pid bs gs)).lookup "mask"
+        = some (TritonValue.tensor [1024] ys) ∧
+      xs.length = 1024 ∧ ys.length = 1024 ∧
+      (∀ i, i < 1024 → xs.getD i 0 = Int.ofNat pid * 1024 + Int.ofNat i) ∧
+      (∀ i, i < 1024 → ys.getD i 0 = Int.ofNat a.length) := by
+  simp only [parsedVectorAddTutorial, parsedInitState, evalKernel, evalInstr, evalOp,
+             List.take, MachineState.bind, MachineState.lookup, TritonValue.zipWith,
+             List.foldl, List.range, List.replicate]
+  refine ⟨_, _, rfl, rfl, by simp, by simp, fun i hi => ?_, fun i hi => ?_⟩
+  · simp [List.getD, List.getElem?_map, List.getElem?_range, hi]
+  · simp [List.getD, List.getElem?_replicate, hi]
+
+theorem parsedVectorAddTutorial_s10_memory_unchanged (a b : List Int) (pid bs gs : Nat) :
+    (evalKernel (parsedVectorAddTutorial.take 10) (parsedInitState a b pid bs gs)).memory
+      = (parsedInitState a b pid bs gs).memory := by
+  apply evalKernel_memory_unchanged_of_no_store
+  intro instr hi
+  simp only [parsedVectorAddTutorial, List.take] at hi
+  rcases hi with rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl <;> exact ⟨by decide, by decide⟩
+
+theorem parsedVectorAddTutorial_s8_faithful (a b : List Int) (pid bs gs : Nat)
+    (h_cov : (pid + 1) * 1024 ≤ a.length) :
+    StatesFaithful
+      (evalKernel (parsedVectorAddTutorial.take 8) (parsedInitState a b pid bs gs))
+      (symEvalKernel (parsedVectorAddTutorial.take 8) (symParsedVectorAddInitState pid bs gs a.length))
+      (concreteMem a b) := by
+  obtain ⟨hp, hbs, hgs, hmem, hsc, hten, hnone⟩ := parsedVectorAddTutorial_prefix7_faithful a b pid bs gs
+  obtain ⟨xs, ys, h_lx, h_ly, hxlen, hylen, hxval, hyval⟩ :=
+    parsedVectorAddTutorial_s7_has_tensors a b pid bs gs
+  have step := cmpi_slt_tensor_faithful_when_all_true
+    hp hbs hgs hmem hsc hten hnone
+    { result := "mask_2", op := .cmpi_slt, args := ["offsets_1", "mask"] }
+    "offsets_1" "mask" rfl rfl [1024] xs ys h_lx h_ly
+    (by rw [hxlen, hylen])
+    (fun i hi => by
+      have hi' : i < 1024 := hxlen ▸ hi
+      rw [hxval i hi', hyval i hi']
+      omega)
+  simpa [parsedVectorAddTutorial, evalKernel, symEvalKernel, List.take, List.foldl] using step
+
+theorem parsedVectorAddTutorial_s10_faithful (a b : List Int) (pid bs gs : Nat)
+    (h_cov : (pid + 1) * 1024 ≤ a.length) :
+    StatesFaithful
+      (evalKernel (parsedVectorAddTutorial.take 10) (parsedInitState a b pid bs gs))
+      (symEvalKernel (parsedVectorAddTutorial.take 10) (symParsedVectorAddInitState pid bs gs a.length))
+      (concreteMem a b) := by
+  have step := symEvalKernel_faithful
+    [{ result := "x", op := .splat [1024], args := ["x_ptr"] },
+     { result := "x_3", op := .addptr, args := ["x", "offsets_1"] }]
+    (evalKernel (parsedVectorAddTutorial.take 8) (parsedInitState a b pid bs gs))
+    (symEvalKernel (parsedVectorAddTutorial.take 8) (symParsedVectorAddInitState pid bs gs a.length))
+    (concreteMem a b)
+    (parsedVectorAddTutorial_s8_faithful a b pid bs gs h_cov)
+  simpa [parsedVectorAddTutorial, evalKernel, symEvalKernel, List.take, List.foldl] using step
+
 theorem range_map_getD_pair_eq_zip
     (addrs vals : List Int) (n : Nat) (hlen_a : addrs.length = n) (hlen_v : vals.length = n) :
     (List.range n).map (fun i => (addrs.getD i 0, vals.getD i 0)) = addrs.zip vals := by
@@ -72,6 +342,70 @@ theorem index_fold_eq_writeTile
     = s.writeTile (addrs.map Int.natAbs) vals := by
   simp only [MachineState.writeTile, List.zip_map_left]
   rw [← range_map_getD_pair_eq_zip addrs vals n hlen_a hlen_v, ← List.foldl_map]
+
+theorem filterMap_kept_eq_zip
+    (addrs vals masks : List Int) (hlen_av : addrs.length = vals.length)
+    (hlen_am : addrs.length = masks.length)
+    (hall : ∀ i, i < masks.length → masks.getD i 0 ≠ 0) :
+    ((addrs.zip vals).zip masks).filterMap (fun (p : (Int × Int) × Int) =>
+      if p.2 != 0 then some p.1 else none) = addrs.zip vals := by
+  induction addrs generalizing vals masks with
+  | nil => simp
+  | cons a as ih =>
+      cases vals with
+      | nil => simp at hlen_av
+      | cons v vs =>
+          cases masks with
+          | nil => simp at hlen_am
+          | cons mk ms =>
+              simp only [List.length_cons] at hlen_av hlen_am
+              have hmk : mk ≠ 0 := hall 0 (by omega)
+              simp only [List.zip_cons_cons, List.filterMap_cons]
+              have hmk' : mk != 0 := by simpa using hmk
+              simp only [hmk', ↓reduceIte]
+              rw [ih vs ms (by omega) (by omega) (fun i hi => hall (i+1) (by omega))]
+
+theorem store_tensor_masked_faithful_when_all_true
+    {s : MachineState} {ss : SymState} {mem : Nat → Int}
+    (hp : s.pid = ss.pid) (hbs : s.block_size = ss.block_size)
+    (hgs : s.grid_size = ss.grid_size)
+    (hmem : ∀ addr, evalExpr (ss.memory addr) mem = s.memory addr)
+    (hsc : ∀ v val, s.env v = some (scalar val) →
+        ∃ e, ss.env v = some (SymValue.scalar e) ∧ evalExpr e mem = val)
+    (hten : ∀ v sh vals, s.env v = some (tensor sh vals) →
+        ∃ g, ss.env v = some (SymValue.tensor vals.length g)
+          ∧ ∀ i, i < vals.length → evalExpr (g i) mem = vals.getD i 0)
+    (hnone : ∀ v, s.env v = none → ss.env v = none)
+    (instr : TritonInstr) (p v m : String)
+    (h_op : instr.op = .store) (h_args : instr.args = [p, v, m])
+    (sh : List Nat) (addrs vals masks : List Int)
+    (h_lp : s.lookup p = some (tensor sh addrs))
+    (h_lv : s.lookup v = some (tensor sh vals))
+    (h_lm : s.lookup m = some (tensor sh masks))
+    (hlen_av : addrs.length = vals.length)
+    (hlen_am : addrs.length = masks.length)
+    (hall : ∀ i, i < masks.length → masks.getD i 0 ≠ 0)
+    (gp gv : Nat → Expr)
+    (hgp : ss.env p = some (SymValue.tensor addrs.length gp))
+    (hgv_corr : ss.env v = some (SymValue.tensor vals.length gv))
+    (hconcrete : ∀ i, i < addrs.length → (gp i).isConcrete = true)
+    (haddr : ∀ i, i < addrs.length → evalExpr (gp i) mem = addrs.getD i 0)
+    (hval : ∀ i, i < addrs.length → evalExpr (gv i) mem = vals.getD i 0) :
+    StatesFaithful (evalInstr instr s) (symEvalInstr instr ss) mem := by
+  have hconcrete_eq : evalInstr instr s
+      = evalInstr { result := instr.result, op := .store, args := [p, v] } s := by
+    simp only [evalInstr, h_op, h_args, h_lp, h_lv, h_lm, MachineState.lookup]
+    rw [filterMap_kept_eq_zip addrs vals masks hlen_av hlen_am hall]
+    simp [List.map_fst_zip, List.map_snd_zip, hlen_av]
+  have hsym_eq : symEvalInstr instr ss
+      = symEvalInstr { result := instr.result, op := .store, args := [p, v] } ss := by
+    simp only [symEvalInstr, h_op, h_args]
+  rw [hconcrete_eq, hsym_eq]
+  exact store_tensor_faithful_when_memory_unchanged
+    hp hbs hgs hmem hsc hten hnone
+    { result := instr.result, op := .store, args := [p, v] } p v rfl rfl
+    sh addrs vals h_lp h_lv hlen_av gp gv hgp hgv_corr hconcrete haddr hval
+
 theorem store_tensor_faithful_when_memory_unchanged
     {s : MachineState} {ss : SymState} {mem : Nat → Int}
     (hp : s.pid = ss.pid) (hbs : s.block_size = ss.block_size)
@@ -104,6 +438,91 @@ theorem store_tensor_faithful_when_memory_unchanged
     (fun i => addrs.getD i 0) (fun i => vals.getD i 0) mem
     hconcrete haddr hval s ss hmem addr
   rwa [index_fold_eq_writeTile addrs vals addrs.length rfl hlen.symm s] at key
+
+theorem cmpi_slt_tensor_faithful_when_all_true
+    {s : MachineState} {ss : SymState} {mem : Nat → Int}
+    (hp : s.pid = ss.pid) (hbs : s.block_size = ss.block_size)
+    (hgs : s.grid_size = ss.grid_size)
+    (hmem : ∀ addr, evalExpr (ss.memory addr) mem = s.memory addr)
+    (hsc : ∀ v val, s.env v = some (scalar val) →
+        ∃ e, ss.env v = some (SymValue.scalar e) ∧ evalExpr e mem = val)
+    (hten : ∀ v sh vals, s.env v = some (tensor sh vals) →
+        ∃ g, ss.env v = some (SymValue.tensor vals.length g)
+          ∧ ∀ i, i < vals.length → evalExpr (g i) mem = vals.getD i 0)
+    (hnone : ∀ v, s.env v = none → ss.env v = none)
+    (instr : TritonInstr) (a b : String)
+    (h_op : instr.op = .cmpi_slt) (h_args : instr.args = [a, b])
+    (sh : List Nat) (xs ys : List Int)
+    (h_la : s.lookup a = some (tensor sh xs))
+    (h_lb : s.lookup b = some (tensor sh ys))
+    (hlen : xs.length = ys.length)
+    (hall : ∀ i, i < xs.length → xs.getD i 0 < ys.getD i 0) :
+    StatesFaithful (evalInstr instr s) (symEvalInstr instr ss) mem := by
+  have ⟨ga, hga, _⟩ := hten a sh xs h_la
+  have ⟨gb, hgb, _⟩ := hten b sh ys h_lb
+  simp only [evalInstr, symEvalInstr, h_op, h_args, evalOp, symEvalOp,
+             MachineState.lookup, h_la, h_lb, SymState.lookup, hga, hgb]
+  have hval_eq : ((xs.zip ys).map fun (x, y) => if x < y then (1:Int) else 0)
+      = List.replicate xs.length 1 := by
+    apply List.ext_getElem
+    · simp [hlen]
+    · intro i h1 h2
+      simp only [List.getElem_map, List.getElem_zip, List.getElem_replicate]
+      have hi : i < xs.length := by simpa using h1
+      have hi2 : i < ys.length := by omega
+      have hlt : xs.getD i 0 < ys.getD i 0 := hall i hi
+      rw [List.getD_eq_getElem xs 0 hi, List.getD_eq_getElem ys 0 hi2] at hlt
+      simp [hlt]
+  rw [hval_eq]
+  have hlen2 : (List.replicate xs.length (1:Int)).length = xs.length := by simp
+  rw [← hlen2]
+  refine bind_tensor_faithful hp hbs hgs hmem hsc hten hnone instr.result
+    sh (List.replicate xs.length 1) (fun _ => Expr.lit 1) ?_
+  intro i hi
+  simp [evalExpr, List.getD, List.getElem?_replicate, hi]
+
+theorem load_tensor_masked_faithful_when_all_true
+    {s : MachineState} {ss : SymState} {mem : Nat → Int}
+    (hp : s.pid = ss.pid) (hbs : s.block_size = ss.block_size)
+    (hgs : s.grid_size = ss.grid_size)
+    (hmem : ∀ addr, evalExpr (ss.memory addr) mem = s.memory addr)
+    (hsc : ∀ v val, s.env v = some (scalar val) →
+        ∃ e, ss.env v = some (SymValue.scalar e) ∧ evalExpr e mem = val)
+    (hten : ∀ v sh vals, s.env v = some (tensor sh vals) →
+        ∃ g, ss.env v = some (SymValue.tensor vals.length g)
+          ∧ ∀ i, i < vals.length → evalExpr (g i) mem = vals.getD i 0)
+    (hnone : ∀ v, s.env v = none → ss.env v = none)
+    (hmem_raw : s.memory = mem)
+    (instr : TritonInstr) (p m : String)
+    (h_op : instr.op = .load) (h_args : instr.args = [p, m])
+    (sh : List Nat) (addrs masks : List Int)
+    (h_lp : s.lookup p = some (tensor sh addrs))
+    (h_lm : s.lookup m = some (tensor sh masks))
+    (hlen : addrs.length = masks.length)
+    (hall : ∀ i, i < masks.length → masks.getD i 0 ≠ 0) :
+    StatesFaithful (evalInstr instr s) (symEvalInstr instr ss) mem := by
+  have ⟨g, hg, hgv⟩ := hten p sh addrs h_lp
+  simp only [evalInstr, symEvalInstr, h_op, h_args, evalOp, symEvalOp,
+             MachineState.lookup, h_lp, h_lm, SymState.lookup, hg]
+  have hval_eq : ((addrs.zip masks).map fun (a, mk) =>
+      if mk != 0 then s.readMem a.natAbs else 0)
+      = addrs.map fun a => s.readMem a.natAbs := by
+    apply List.ext_getElem
+    · simp [hlen]
+    · intro i h1 h2
+      simp only [List.getElem_map, List.getElem_zip]
+      have hi1 : i < addrs.length := by simpa using h1
+      have hi2 : i < masks.length := by omega
+      have hne : masks.getD i 0 ≠ 0 := hall i hi2
+      rw [List.getD_eq_getElem masks 0 hi2] at hne
+      simp [hne]
+  rw [hval_eq]
+  refine bind_tensor_faithful hp hbs hgs hmem hsc hten hnone instr.result
+    sh (addrs.map fun a => s.readMem a.natAbs) (fun i => Expr.load (g i)) ?_
+  intro i hi
+  simp only [List.length_map] at hi
+  simp only [evalExpr, hgv i hi, MachineState.readMem, hmem_raw]
+  simp [List.getD, List.getElem?_map, hi]
 
 private theorem map_add_getD (ys : List Int) (x : Int) (i : Nat) (h : i < ys.length) :
     (ys.map (· + x)).getD i 0 = ys.getD i 0 + x := by
@@ -171,6 +590,27 @@ def parsedVectorAdd : TritonKernel := [
   { result := "9",         op := .load,                   args := ["6"] },
   { result := "10",        op := .addf,                   args := ["8", "9"] },
   { result := "_",         op := .store,                  args := ["7", "10"] }
+]
+
+def parsedVectorAddTutorial : TritonKernel := [
+  { result := "c1024_i32",   op := .constant 1024,          args := [] },
+  { result := "pid",         op := .get_program_id 0,       args := [] },
+  { result := "block_start", op := .muli,                   args := ["pid", "c1024_i32"] },
+  { result := "offsets",     op := .make_range (some 1024), args := [] },
+  { result := "offsets_0",   op := .splat [1024],            args := ["block_start"] },
+  { result := "offsets_1",   op := .addi,                   args := ["offsets_0", "offsets"] },
+  { result := "mask",        op := .splat [1024],            args := ["n_elements"] },
+  { result := "mask_2",      op := .cmpi_slt,                args := ["offsets_1", "mask"] },
+  { result := "x",           op := .splat [1024],            args := ["x_ptr"] },
+  { result := "x_3",         op := .addptr,                 args := ["x", "offsets_1"] },
+  { result := "x_4",         op := .load,                   args := ["x_3", "mask_2"] },
+  { result := "y",           op := .splat [1024],            args := ["y_ptr"] },
+  { result := "y_5",         op := .addptr,                 args := ["y", "offsets_1"] },
+  { result := "y_6",         op := .load,                   args := ["y_5", "mask_2"] },
+  { result := "output",      op := .addf,                   args := ["x_4", "y_6"] },
+  { result := "0",           op := .splat [1024],            args := ["output_ptr"] },
+  { result := "1",           op := .addptr,                 args := ["0", "offsets_1"] },
+  { result := "_",           op := .store,                  args := ["1", "output", "mask_2"] }
 ]
 
 theorem parsedVectorAdd_prefix_memory_unchanged (a b : List Int) (pid bs gs : Nat) :
@@ -826,7 +1266,41 @@ theorem evalInstr_faithful (instr : TritonInstr)
                       simp only [evalExpr, hepv, hgov i hi]
                       simp [List.getD, hi, Int.add_comm]
             | tensor sh1 bases =>
-                sorry -- addptr tensor-base: not needed for vector-add
+                have h_env_p : s.env p = some (tensor sh1 bases) := h_lp
+                have ⟨gp, hgp, hgpv⟩ := hten p sh1 bases h_lp
+                cases h_lo : s.lookup o with
+                | none =>
+                    have hss_o : ss.env o = none := hnone o h_lo
+                    simp only [evalInstr, symEvalInstr, h_op, h_args, evalOp, symEvalOp,
+                               MachineState.lookup, h_env_p, h_lo, SymState.lookup, hgp]
+                    simp only [hss_o]; exact hf
+                | some vo => cases vo with
+                  | scalar y =>
+                      have ⟨ey, heys, _⟩ := hsc o y h_lo
+                      simp only [evalInstr, symEvalInstr, h_op, h_args, evalOp, symEvalOp,
+                                 MachineState.lookup, h_env_p, h_lo, SymState.lookup, hgp, heys]
+                      exact hf
+                  | tensor sh2 offs =>
+                      have h_env_o : s.env o = some (tensor sh2 offs) := h_lo
+                      have ⟨go, hgo, hgov⟩ := hten o sh2 offs h_lo
+                      by_cases hsh : sh1 = sh2
+                      · by_cases hlen : bases.length = offs.length
+                        · subst hsh
+                          simp only [evalInstr, symEvalInstr, h_op, h_args, evalOp, symEvalOp,
+                                     MachineState.lookup, h_env_p, h_env_o, SymState.lookup, hgp, hgo,
+                                     BEq.rfl, ↓reduceIte]
+                          have hlen2 : ((bases.zip offs).map (fun (b, o) => b + o)).length = bases.length := by
+                            simp [List.length_zip, hlen]
+                          rw [← hlen2]
+                          refine bind_tensor_faithful hp hbs hgs hmem hsc hten hnone instr.result
+                            sh1 ((bases.zip offs).map (fun (b, o) => b + o))
+                            (fun i => Expr.add (gp i) (go i)) ?_
+                          intro i hi
+                          simp only [List.length_map, List.length_zip, hlen, min_self] at hi
+                          simp only [evalExpr, hgpv i (hlen ▸ hi), hgov i hi]
+                          simp [List.getD, List.getElem?_map, List.getElem?_zip, hi, hlen]
+                        · sorry -- addptr tensor×tensor, length mismatch (not needed)
+                      · sorry -- addptr tensor×tensor, shape mismatch (not needed)
       | [] => simp only [evalInstr, symEvalInstr, h_op, evalOp, symEvalOp]; exact hf
       | [_] => simp only [evalInstr, symEvalInstr, h_op, evalOp, symEvalOp]; exact hf
       | _ :: _ :: _ :: _ => simp only [evalInstr, symEvalInstr, h_op, evalOp, symEvalOp]; exact hf
@@ -932,6 +1406,17 @@ theorem symEvalKernel_faithful (K : TritonKernel)
   | cons instr rest ih =>
     simp only [evalKernel, symEvalKernel, List.foldl]
     exact ih _ _ (evalInstr_faithful instr s ss mem h)
+
+theorem parsedVectorAddTutorial_prefix7_faithful (a b : List Int) (pid bs gs : Nat) :
+    StatesFaithful
+      (evalKernel (parsedVectorAddTutorial.take 7) (parsedInitState a b pid bs gs))
+      (symEvalKernel (parsedVectorAddTutorial.take 7) (symParsedVectorAddInitState pid bs gs a.length))
+      (concreteMem a b) :=
+  symEvalKernel_faithful (parsedVectorAddTutorial.take 7)
+    (parsedInitState a b pid bs gs)
+    (symParsedVectorAddInitState pid bs gs a.length)
+    (concreteMem a b)
+    (parsedInitStates_faithful a b pid bs gs)
 
 theorem symEval_sound (K : TritonKernel) (a b : List Int) (pid bs gs i : Nat) :
     evalExpr
