@@ -347,6 +347,37 @@ theorem parsedVectorAdd_full_faithful (a b : List Int) (pid bs gs : Nat) :
     (fun i _ => hconcrete i) haddr hgv_vals
   simpa [parsedVectorAdd, evalKernel, symEvalKernel, List.take, List.foldl] using step
 
+theorem parsedVectorAdd_correct
+    (a b : List Int) (pid bs gs : Nat)
+    (h_len : a.length = b.length) (h_bs : bs = 1024) (h_pid : pid < gs) (h_cov : gs * bs = a.length) :
+    ∀ i < bs,
+      let s  := parsedInitState a b pid bs gs
+      let s' := evalKernel parsedVectorAdd s
+      s'.readMem (2 * a.length + pid * bs + i) =
+      (vectorAddSpec a b).getD (pid * bs + i) 0 := by
+  intro i hi
+  have h_inbound : pid * bs + i < a.length := by
+    have h1 : pid + 1 <= gs := Nat.succ_le_of_lt h_pid
+    have h2 : (pid + 1) * bs <= gs * bs := Nat.mul_le_mul_right bs h1
+    simp [Nat.add_mul] at h2
+    omega
+  have h_spec : (vectorAddSpec a b).getD (pid * bs + i) 0 =
+      a.getD (pid * bs + i) 0 + b.getD (pid * bs + i) 0 :=
+    zipWith_add_getD a b (pid * bs + i) h_len
+  rw [h_spec]
+  obtain ⟨_, _, _, hmem, _⟩ := parsedVectorAdd_full_faithful a b pid bs gs
+  have key := hmem (2 * a.length + pid * bs + i)
+  show MachineState.readMem _ (2 * a.length + pid * bs + i) = _
+  unfold MachineState.readMem
+  rw [← key]
+  simp only [parsedVectorAdd, symParsedVectorAddInitState, symEvalKernel, symEvalInstr, symEvalOp,
+             symAdd, SymState.bind, SymState.lookup, SymState.writeMem, List.foldl]
+  simp only [evalExpr, concreteMem, layoutMemory, h_bs]
+  have hi1 : pid * 1024 + i < a.length := by omega
+  have hi2 : a.length + (pid * 1024 + i) < 2 * a.length := by omega
+  simp [hi1, hi2]
+  omega
+
 theorem load_tensor_faithful_when_memory_unchanged
     {s : MachineState} {ss : SymState} {mem : Nat → Int}
     (hp : s.pid = ss.pid) (hbs : s.block_size = ss.block_size)
