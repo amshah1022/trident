@@ -15,8 +15,8 @@ def parseOp (opName : String) (rest : List String := []) : Option TritonOp :=
       |>.takeWhile (fun t => t.toNat?.isSome) |>.filterMap (·.toNat?)
     some (.splat shape)
   | "tt.addptr"         => some .addptr
-  | "tt.load"           => some .load
-  | "tt.store"          => some .store
+  | "tt.load" => some .load
+  | "tt.store" => some .store
   | "tt.get_program_id" =>
     let axis := match rest with
       | "y" :: _ => 1
@@ -33,16 +33,16 @@ def parseOp (opName : String) (rest : List String := []) : Option TritonOp :=
       |>.takeWhile (fun t => t.toNat?.isSome) |>.filterMap (·.toNat?)
     some (.broadcast shape)
   | "tt.dot"            => some .dot
-  | "tt.reduce"         => some (.reduce_sum 0)
+  | "tt.reduce_sum" => some (.reduce_sum 0)
+  | "tt.reduce_max" => some (.reduce_max 0)
   | "arith.constant" =>
     if rest.any (fun t => t.startsWith "dense<") then
       let denseTok := rest.find? (fun t => t.startsWith "dense<") |>.getD ""
       let valStr := ((denseTok.splitOn "<").getD 1 "").splitOn ">" |>.head?.getD ""
-      let val : Int := valStr.toInt?.getD 0   -- non-integer literals (e.g. "0.000000e+00") are all 0 here
       let shapeTok := rest.reverse.find? (fun t => t.startsWith "tensor<") |>.getD ""
       let shape := ((shapeTok.splitOn "<").getD 1 "").splitOn "x"
         |>.takeWhile (fun t => t.toNat?.isSome) |>.filterMap (·.toNat?)
-      some (.constant_tensor val shape)
+      some (.constant_tensor (valStr.toInt?.getD 0) shape)
     else
       let val := rest.filter (fun t => t.toInt?.isSome) |>.head? |>.bind String.toInt?
       some (.constant (val.getD 0))
@@ -71,6 +71,9 @@ def parseOp (opName : String) (rest : List String := []) : Option TritonOp :=
   | "arith.remsi" => some .remsi
   | "arith.truncf" => some .truncf
   | "arith.andi" => some .andi
+  | "arith.subf" => some .subf
+  | "arith.divf" => some .divf
+  | "math.exp" => some .expf
   | _                   => none
 
 def isSSAVar (s : String) : Bool := s.startsWith "%"

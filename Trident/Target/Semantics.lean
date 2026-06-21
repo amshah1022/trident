@@ -31,23 +31,24 @@ def evalOp (op : TritonOp) (args : List String) (s : MachineState)
 
   | .constant v =>
       some (scalar v)
+
+  | .constantf v =>
+      some (fscalar v)
+
   | .make_range sizeOpt =>
-    let sz := sizeOpt.getD s.block_size
-    some (tensor [sz] ((List.range sz).map Int.ofNat))
+      let sz := sizeOpt.getD s.block_size
+      some (tensor [sz] ((List.range sz).map Int.ofNat))
+
   | .splat shape =>
-    match args with
-    | [v] => match s.lookup v with
-      | some (scalar x) =>
-          some (tensor shape (List.replicate (shape.foldl (· * ·) 1) x))
+      match args with
+      | [v] => match s.lookup v with
+        | some (scalar x) =>
+            some (tensor shape (List.replicate (shape.foldl (· * ·) 1) x))
+        | some (fscalar x) =>
+            some (ftensor shape (List.replicate (shape.foldl (· * ·) 1) x))
+        | _ => none
       | _ => none
-    | _ => none
-  | .divsi =>
-    match args with
-    | [a, b] =>
-        (s.lookup a).bind fun va =>
-        (s.lookup b).bind fun vb =>
-        va.zipWith (· / ·) vb
-    | _ => none
+
   | .addptr =>
       match args with
       | [p, o] => match s.lookup p, s.lookup o with
@@ -81,6 +82,27 @@ def evalOp (op : TritonOp) (args : List String) (s : MachineState)
               if mk != 0 then s.readMem a.natAbs else o))
         | _, _, _ => none
       | _ => none
+
+  | .loadf =>
+      match args with
+      | [p] => match s.lookup p with
+        | some (scalar addr) => some (fscalar (s.readMemF addr.natAbs))
+        | some (tensor sh addrs) => some (ftensor sh (addrs.map fun a => s.readMemF a.natAbs))
+        | _ => none
+      | [p, m] =>
+        match s.lookup p, s.lookup m with
+        | some (tensor sh addrs), some (tensor _ masks) =>
+            some (ftensor sh ((addrs.zip masks).map fun (a, mk) =>
+              if mk != 0 then s.readMemF a.natAbs else 0.0))
+        | _, _ => none
+      | [p, m, other] =>
+        match s.lookup p, s.lookup m, s.lookup other with
+        | some (tensor sh addrs), some (tensor _ masks), some (ftensor _ others) =>
+            some (ftensor sh (((addrs.zip masks).zip others).map fun ((a, mk), o) =>
+              if mk != 0 then s.readMemF a.natAbs else o))
+        | _, _, _ => none
+      | _ => none
+
   | .andi =>
       match args with
       | [a, b] =>
@@ -95,6 +117,7 @@ def evalOp (op : TritonOp) (args : List String) (s : MachineState)
               else none
           | _, _ => none
       | _ => none
+
   | .addi =>
       match args with
       | [a, b] =>
@@ -111,6 +134,7 @@ def evalOp (op : TritonOp) (args : List String) (s : MachineState)
               if s1 == s2
               then some (TritonValue.tensor s1 ((xs.zip ys).map (fun (x,y) => x + y)))
               else none
+          | _, _ => none
       | _ => none
 
   | .addf =>
@@ -129,6 +153,55 @@ def evalOp (op : TritonOp) (args : List String) (s : MachineState)
               if s1 == s2
               then some (TritonValue.tensor s1 ((xs.zip ys).map (fun (x,y) => x + y)))
               else none
+          | TritonValue.fscalar x, TritonValue.fscalar y =>
+            some (TritonValue.fscalar (x + y))
+          | TritonValue.fscalar x, TritonValue.ftensor sh ys =>
+            some (TritonValue.ftensor sh (ys.map (· + x)))
+          | TritonValue.ftensor sh xs, TritonValue.fscalar y =>
+            some (TritonValue.ftensor sh (xs.map (· + y)))
+          | TritonValue.ftensor s1 xs, TritonValue.ftensor s2 ys =>
+            if s1 == s2
+            then some (TritonValue.ftensor s1 ((xs.zip ys).map (fun (x,y) => x + y)))
+            else none
+          | _, _ => none
+      | _ => none
+
+  | .subf =>
+      match args with
+      | [a, b] =>
+          (s.lookup a).bind fun va =>
+          (s.lookup b).bind fun vb =>
+          match va, vb with
+          | TritonValue.fscalar x, TritonValue.fscalar y =>
+              some (TritonValue.fscalar (x - y))
+          | TritonValue.fscalar x, TritonValue.ftensor sh ys =>
+              some (TritonValue.ftensor sh (ys.map (x - ·)))
+          | TritonValue.ftensor sh xs, TritonValue.fscalar y =>
+              some (TritonValue.ftensor sh (xs.map (· - y)))
+          | TritonValue.ftensor s1 xs, TritonValue.ftensor s2 ys =>
+              if s1 == s2
+              then some (TritonValue.ftensor s1 ((xs.zip ys).map (fun (x,y) => x - y)))
+              else none
+          | _, _ => none
+      | _ => none
+
+  | .divf =>
+      match args with
+      | [a, b] =>
+          (s.lookup a).bind fun va =>
+          (s.lookup b).bind fun vb =>
+          match va, vb with
+          | TritonValue.fscalar x, TritonValue.fscalar y =>
+              some (TritonValue.fscalar (x / y))
+          | TritonValue.fscalar x, TritonValue.ftensor sh ys =>
+              some (TritonValue.ftensor sh (ys.map (x / ·)))
+          | TritonValue.ftensor sh xs, TritonValue.fscalar y =>
+              some (TritonValue.ftensor sh (xs.map (· / y)))
+          | TritonValue.ftensor s1 xs, TritonValue.ftensor s2 ys =>
+              if s1 == s2
+              then some (TritonValue.ftensor s1 ((xs.zip ys).map (fun (x,y) => x / y)))
+              else none
+          | _, _ => none
       | _ => none
 
   | .maxsi =>
@@ -147,6 +220,7 @@ def evalOp (op : TritonOp) (args : List String) (s : MachineState)
               if s1 == s2
               then some (TritonValue.tensor s1 ((xs.zip ys).map (fun (x,y) => max x y)))
               else none
+          | _, _ => none
       | _ => none
 
   | .minsi =>
@@ -165,6 +239,7 @@ def evalOp (op : TritonOp) (args : List String) (s : MachineState)
               if s1 == s2
               then some (TritonValue.tensor s1 ((xs.zip ys).map (fun (x,y) => min x y)))
               else none
+          | _, _ => none
       | _ => none
 
   | .remsi =>
@@ -183,6 +258,7 @@ def evalOp (op : TritonOp) (args : List String) (s : MachineState)
               if s1 == s2
               then some (TritonValue.tensor s1 ((xs.zip ys).map (fun (x,y) => x % y)))
               else none
+          | _, _ => none
       | _ => none
 
   | .truncf =>
@@ -191,8 +267,10 @@ def evalOp (op : TritonOp) (args : List String) (s : MachineState)
       | _ => none
 
   | .constant_tensor val shape =>
-            some (tensor shape (List.replicate (shape.foldl (· * ·) 1) val))
+      some (tensor shape (List.replicate (shape.foldl (· * ·) 1) val))
 
+  | .constant_tensorf val shape =>
+      some (ftensor shape (List.replicate (shape.foldl (· * ·) 1) val))
 
   | .broadcast shape =>
       match args with
@@ -227,10 +305,19 @@ def evalOp (op : TritonOp) (args : List String) (s : MachineState)
           va.zipWith (· * ·) vb
       | _ => none
 
+  | .divsi =>
+      match args with
+      | [a, b] =>
+          (s.lookup a).bind fun va =>
+          (s.lookup b).bind fun vb =>
+          va.zipWith (· / ·) vb
+      | _ => none
+
   | .reduce_sum _ =>
       match args with
       | [v] => match s.lookup v with
         | some (tensor _ vals) => some (scalar (vals.foldl (· + ·) 0))
+        | some (ftensor _ vals) => some (fscalar (vals.foldl (· + ·) 0.0))
         | _ => none
       | _ => none
 
@@ -238,6 +325,7 @@ def evalOp (op : TritonOp) (args : List String) (s : MachineState)
       match args with
       | [v] => match s.lookup v with
         | some (tensor _ (hd :: tl)) => some (scalar (tl.foldl max hd))
+        | some (ftensor _ (hd :: tl)) => some (fscalar (tl.foldl max hd))
         | _ => none
       | _ => none
 
@@ -316,6 +404,14 @@ def evalOp (op : TritonOp) (args : List String) (s : MachineState)
         | _ => none
       | _ => none
 
+  | .expf =>
+      match args with
+      | [v] => match s.lookup v with
+        | some (fscalar x) => some (fscalar x.exp)
+        | some (ftensor sh xs) => some (ftensor sh (xs.map Float.exp))
+        | _ => none
+      | _ => none
+
   -- Store and all unimplemented ops handled in evalInstr
   | _ => none
 
@@ -339,6 +435,18 @@ def evalInstr (instr : TritonInstr) (s : MachineState) : MachineState :=
             let kept := ((addrs.zip vals).zip masks).filterMap fun ((a, v), mk) =>
               if mk != 0 then some (a, v) else none
             s.writeTile (kept.map (·.1.natAbs)) (kept.map (·.2))
+        | _, _, _ => s
+      | _ => s
+  | .storef =>
+      match instr.args with
+      | [p, v] => match s.lookup p, s.lookup v with
+        | some (tensor _ addrs), some (ftensor _ vals) => s.writeTileF (addrs.map Int.natAbs) vals
+        | _, _ => s
+      | [p, v, m] => match s.lookup p, s.lookup v, s.lookup m with
+        | some (tensor _ addrs), some (ftensor _ vals), some (tensor _ masks) =>
+            let kept := ((addrs.zip vals).zip masks).filterMap fun ((a, v), mk) =>
+              if mk != 0 then some (a, v) else none
+            s.writeTileF (kept.map (·.1.natAbs)) (kept.map (·.2))
         | _, _, _ => s
       | _ => s
   | _ =>
@@ -387,19 +495,20 @@ theorem evalKernel_cons (i : TritonInstr) (rest : TritonKernel) (s : MachineStat
 theorem evalInstr_non_store_bind
     (instr : TritonInstr) (s : MachineState) (val : TritonValue)
     (h_op : evalOp instr.op instr.args s = some val)
-    (h_not_store : instr.op ≠ .store) :
+    (h_not_store : instr.op ≠ .store)
+    (h_not_storef : instr.op ≠ .storef) :
     evalInstr instr s = s.bind instr.result val := by
   simp [evalInstr, h_op]
 
--- evalInstr only changes the result variable's binding
 theorem evalInstr_lookup_other
     (instr : TritonInstr) (s : MachineState) (v : String)
     (h_diff : v ≠ instr.result)
     (h_not_store : instr.op ≠ .store)
+    (h_not_storef : instr.op ≠ .storef)
     (val : TritonValue)
     (h_op : evalOp instr.op instr.args s = some val) :
     (evalInstr instr s).lookup v = s.lookup v := by
-  rw [evalInstr_non_store_bind instr s val h_op h_not_store]
+  rw [evalInstr_non_store_bind instr s val h_op h_not_store h_not_storef]
   exact MachineState.bind_lookup_other _ _ _ _ (Ne.symm h_diff)
 
 -- ── TargetSemantics Instance ──────────────────────────────────────────────────

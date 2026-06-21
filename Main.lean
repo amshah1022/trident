@@ -56,29 +56,29 @@ def runVerify (p : Parsed) : IO UInt32 := do
     |> String.intercalate "\n"
   -- Collapse multi-line tt.reduce blocks into single reduce_sum instructions
   let contentLines := contents.splitOn "\n"
-  let rec collapseReduce (lines : List String) (acc : List String) (inReduce : Bool) (reduceResult : String) (reduceOperand : String) : List String :=
+  let rec collapseReduce (lines : List String) (acc : List String) (inReduce : Bool) (reduceResult : String) (reduceOperand : String) (isMax : Bool) : List String :=
     match lines with
     | [] => acc.reverse
     | l :: rest =>
       if l.contains "tt.reduce" && l.contains " = " then
-        -- extract result name e.g. "%result"
         let resultName := match l.splitOn " = " with | r :: _ => r | [] => "_"
-        -- extract the operand inside "tt.reduce"(%x_5)
         let afterParen := match l.splitOn "\"tt.reduce\"(" with
           | _ :: rest2 :: _ => rest2
           | _ => ""
         let operand := match afterParen.splitOn ")" with
           | head :: _ => head
           | [] => "_"
-        collapseReduce rest acc true resultName operand
+        collapseReduce rest acc true resultName operand false
+      else if inReduce && l.contains "arith.maxnumf" then
+        collapseReduce rest acc inReduce reduceResult reduceOperand true
       else if inReduce && l.startsWith "})" then
-        -- end of reduce block - emit single instruction referencing the real input
-        let newLine := reduceResult ++ " = tt.reduce " ++ reduceOperand
-        collapseReduce rest (newLine :: acc) false "" ""
+        let opName := if isMax then "tt.reduce_max" else "tt.reduce_sum"
+        let newLine := reduceResult ++ " = " ++ opName ++ " " ++ reduceOperand
+        collapseReduce rest (newLine :: acc) false "" "" false
       else if inReduce then
-        collapseReduce rest acc inReduce reduceResult reduceOperand
+        collapseReduce rest acc inReduce reduceResult reduceOperand isMax
       else
-        collapseReduce rest (l :: acc) false "" ""
+        collapseReduce rest (l :: acc) false "" "" false
   let unrollLoop (lines : List String) (n : Nat) : List String :=
     let rec splitAtLoop (ls : List String) (before : List String)
         : Option (List String × String × List String × List String) :=
@@ -91,7 +91,7 @@ def runVerify (p : Parsed) : IO UInt32 := do
               match bs with
               | [] => (bodyAcc.reverse, [])
               | bl :: brest =>
-                  if bl == "}" then (bodyAcc.reverse, brest)
+                  if bl.startsWith "}" then (bodyAcc.reverse, brest)
                   else splitBody brest (bl :: bodyAcc)
             let (body, after) := splitBody rest []
             some (before.reverse, l, body, after)
@@ -161,7 +161,8 @@ def runVerify (p : Parsed) : IO UInt32 := do
         else tok
       let after := after.map (fun l => String.intercalate " " ((l.splitOn " ").map rewriteAfterTok))
       before ++ unrolled ++ after
-  let contents := unrollLoop (collapseReduce contentLines [] false "" "") 4 |> String.intercalate "\n"
+  let loopIters := if specName == "Matmul" then 4 else 1
+  let contents := unrollLoop (collapseReduce contentLines [] false "" "" false) loopIters |> String.intercalate "\n"
   if verbose then
     IO.println "=== Preprocessed contents ==="
     IO.println contents

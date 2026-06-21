@@ -17,6 +17,8 @@ Bitvector semantics can be added as a refinement later.
 inductive TritonValue where
   | scalar (val : Int)
   | tensor (shape : List Nat) (vals : List Int)
+  | fscalar (val : Float)
+  | ftensor (shape : List Nat) (vals : List Float)
   deriving BEq, Repr
 
 namespace TritonValue
@@ -46,6 +48,7 @@ def asTensor : TritonValue → Option (List Nat × List Int)
 def map (f : Int → Int) : TritonValue → TritonValue
   | scalar v      => scalar (f v)
   | tensor s vals => tensor s (vals.map f)
+  | other         => other
 
 /-- Element-wise zip of two TritonValues with the same shape -/
 def zipWith (f : Int → Int → Int) : TritonValue → TritonValue → Option TritonValue
@@ -55,6 +58,35 @@ def zipWith (f : Int → Int → Int) : TritonValue → TritonValue → Option T
       then some (tensor s1 ((xs.zip ys).map (fun (x, y) => f x y)))
       else none
   | _,             _             => none
+
+def isFScalar : TritonValue → Bool
+  | fscalar _ => true
+  | _         => false
+
+def isFTensor : TritonValue → Bool
+  | ftensor _ _ => true
+  | _           => false
+
+def asFScalar : TritonValue → Option Float
+  | fscalar v => some v
+  | _         => none
+
+def asFTensor : TritonValue → Option (List Nat × List Float)
+  | ftensor s vs => some (s, vs)
+  | _            => none
+
+def mapF (f : Float → Float) : TritonValue → TritonValue
+  | fscalar v      => fscalar (f v)
+  | ftensor s vals => ftensor s (vals.map f)
+  | other          => other
+
+def zipWithF (f : Float → Float → Float) : TritonValue → TritonValue → Option TritonValue
+  | fscalar x,      fscalar y      => some (fscalar (f x y))
+  | ftensor s1 xs,  ftensor s2 ys  =>
+      if s1 == s2
+      then some (ftensor s1 ((xs.zip ys).map (fun (x, y) => f x y)))
+      else none
+  | _,              _              => none
 
 end TritonValue
 -- Key lemma: getD of zip+map with equal-length lists

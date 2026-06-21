@@ -51,7 +51,7 @@ inductive TritonOp where
   | constantf (val : Float)
   | addf | subf | mulf | divf
   | negf | absf | sqrtf
-  | truncf | extf              -- float precision conversion
+  | truncf | extf | expf             -- float precision conversion
 
   -- ── Comparison ──
   | select                          -- conditional select
@@ -72,6 +72,9 @@ inductive TritonOp where
   | reshape
   | trans                         -- transpose
 
+  | loadf
+  | storef
+  | constant_tensorf (val : Float) (shape : List Nat)
   deriving BEq, Repr
 
 -- ── SSA Instruction ───────────────────────────────────────────────────────────
@@ -130,5 +133,9 @@ def TritonOp.arity : TritonOp → Nat
   | .cmpi_sgt | .cmpi_sge   => 2
   | .cmpf_olt | .cmpf_ole   => 2
   | .dot                    => 2
+  | .expf => 1
+  | .loadf => 2
+  | .storef => 2
+  | .constant_tensorf _ _ => 0
 
 end Trident

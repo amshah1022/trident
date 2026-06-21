@@ -27,9 +27,9 @@ structure MachineState where
   block_size : Nat
   grid_size  : Nat
   memory     : Nat → Int
+  fmemory    : Nat → Float := fun _ => 0.0
   env        : String → Option TritonValue
   deriving Inhabited
-
 namespace MachineState
 
 -- ── Environment operations ────────────────────────────────────────────────────
@@ -59,6 +59,15 @@ def writeMem (s : MachineState) (addr : Nat) (val : Int) : MachineState :=
 /-- Write a full tile of values starting at base address -/
 def writeTile (s : MachineState) (addrs : List Nat) (vals : List Int) : MachineState :=
   (addrs.zip vals).foldl (fun st (a, v) => st.writeMem a v) s
+
+def readMemF (s : MachineState) (addr : Nat) : Float :=
+  s.fmemory addr
+
+def writeMemF (s : MachineState) (addr : Nat) (val : Float) : MachineState :=
+  { s with fmemory := fun a => if a == addr then val else s.fmemory a }
+
+def writeTileF (s : MachineState) (addrs : List Nat) (vals : List Float) : MachineState :=
+  (addrs.zip vals).foldl (fun st (a, v) => st.writeMemF a v) s
 
 -- ── Key lemmas ────────────────────────────────────────────────────────────────
 -- These are the "machine lemmas" that simulation proofs use.
