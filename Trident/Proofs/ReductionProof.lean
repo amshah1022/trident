@@ -13,7 +13,7 @@ namespace Trident
 def compiledReduction : TritonKernel := [
   { result := "pid",    op := .get_program_id 0, args := [] },
   { result := "bstart", op := .muli,             args := ["pid", "bsize"] },
-  { result := "range",  op := .make_range,        args := [] },
+  { result := "range",  op := .make_range none,        args := [] },
   { result := "offset", op := .addi,             args := ["bstart", "range"] },
   { result := "xptrs",  op := .addptr,           args := ["x_base", "offset"] },
   { result := "xvals",  op := .load,             args := ["xptrs"] },

@@ -25,11 +25,11 @@ inductive TritonOp where
   | get_program_id (axis : Nat)
 
   -- ── Range and pointer arithmetic ──
-  | make_range                    -- [0 .. block_size-1]
-  | splat                         -- broadcast scalar → tile
+  | make_range (size : Option Nat)   -- was: | make_range
+  | splat (shape : List Nat)
   | addptr                        -- pointer + offset (scalar or tiled)
   | expand_dims (axis : Nat)
-  | broadcast
+  | broadcast (shape : List Nat)
 
   -- ── Memory ──
   | load                          -- load from pointer(s)
@@ -39,6 +39,7 @@ inductive TritonOp where
 
   -- ── Integer arithmetic ──
   | constant (val : Int)
+  | constant_tensor (val : Int) (shape : List Nat)
   | addi | subi | muli
   | maxsi | minsi          -- element-wise integer max/min
   | divsi | divui
@@ -94,9 +95,10 @@ abbrev TritonKernel := List TritonInstr
 def TritonOp.arity : TritonOp → Nat
   | .get_program_id _ => 0
   | .constant _       => 0
+  | .constant_tensor _ _ => 0
   | .constantf _      => 0
-  | .make_range       => 0
-  | .splat            => 1
+  | .make_range _       => 0
+  | .splat _           => 1
   | .expand_dims _    => 1
   | .load             => 1
   | .load_masked      => 2
@@ -113,7 +115,7 @@ def TritonOp.arity : TritonOp → Nat
   | .store            => 2
   | .store_masked     => 3
   | .addptr           => 2
-  | .broadcast        => 2
+  | .broadcast _       => 2
   | .addi | .subi | .muli   => 2
   | .maxsi | .minsi          => 2
   | .addf | .subf | .mulf   => 2

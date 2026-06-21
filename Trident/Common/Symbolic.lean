@@ -139,9 +139,9 @@ def symEvalOp (op : TritonOp) (args : List String) (s : SymState)
       some (SymValue.scalar (Expr.lit (Int.ofNat s.pid)))
   | .constant v =>
       some (SymValue.scalar (Expr.lit v))
-  | .make_range =>
+  | .make_range none =>
       some (SymValue.tensor s.block_size (fun i => Expr.lit (Int.ofNat i)))
-  | .splat =>
+  | .splat _ =>
       match args with
       | [v] => match s.lookup v with
         | some (SymValue.scalar e) =>

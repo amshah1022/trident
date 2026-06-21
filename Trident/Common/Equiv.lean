@@ -137,4 +137,43 @@ def checkReductionEquiv (parsed : TritonKernel) : Bool :=
     let got := runReductionParsed parsed x 0 bs gs
     expected == got
 
+def parsedMatmulInitState (a b : List Int) (m k n : Nat) (pid bs gs : Nat) : MachineState :=
+  let aBase := 0
+  let bBase := m * k
+  let cBase := m * k + k * n
+  { pid := pid
+  , pid_y := 0
+  , block_size := bs
+  , grid_size := gs
+  , memory := fun addr =>
+      if addr < m * k then a.getD addr 0
+      else if addr < m * k + k * n then b.getD (addr - m * k) 0
+      else 0
+  , env := fun name => match name with
+      | "a_ptr"     => some (TritonValue.scalar (Int.ofNat aBase))
+      | "b_ptr"     => some (TritonValue.scalar (Int.ofNat bBase))
+      | "c_ptr"     => some (TritonValue.scalar (Int.ofNat cBase))
+      | "M"         => some (TritonValue.scalar (Int.ofNat m))
+      | "N"         => some (TritonValue.scalar (Int.ofNat n))
+      | "K"         => some (TritonValue.scalar (Int.ofNat k))
+      | "stride_am" => some (TritonValue.scalar (Int.ofNat k))
+      | "stride_bk" => some (TritonValue.scalar (Int.ofNat n))
+      | "stride_cm" => some (TritonValue.scalar (Int.ofNat n))
+      | _           => none }
+
+def checkMatmulEquiv (parsed : TritonKernel) : Bool :=
+  let m := 128
+  let k := 128
+  let n := 128
+  let a := (List.range (m * k)).map (fun i => Int.ofNat (i % 7 + 1))
+  let b := (List.range (k * n)).map (fun i => Int.ofNat (i % 5 + 1))
+  let s  := parsedMatmulInitState a b m k n 0 64 1
+  let s' := evalKernel parsed s
+  let cBase := m * k + k * n
+  (List.range 64).all fun i =>
+    (List.range 64).all fun j =>
+      let expected := (List.range k).foldl
+        (fun acc kk => acc + a.getD (i * k + kk) 0 * b.getD (kk * n + j) 0) 0
+      s'.readMem (cBase + i * n + j) == expected
+
 end Trident

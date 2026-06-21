@@ -4,19 +4,47 @@ namespace Trident
 
 def parseOp (opName : String) (rest : List String := []) : Option TritonOp :=
   match opName with
-  | "tt.get_program_id" => some (.get_program_id 0)
-  | "tt.make_range"     => some .make_range
-  | "tt.splat"          => some .splat
+  | "tt.make_range" =>
+    let sz := match rest with
+      | "{end" :: "=" :: szStr :: _ => szStr.toNat?
+      | _ => none
+    some (.make_range sz)
+  | "tt.splat" =>
+    let shapeTok := rest.reverse.find? (fun t => t.startsWith "tensor<") |>.getD ""
+    let shape := ((shapeTok.splitOn "<").getD 1 "").splitOn "x"
+      |>.takeWhile (fun t => t.toNat?.isSome) |>.filterMap (·.toNat?)
+    some (.splat shape)
   | "tt.addptr"         => some .addptr
   | "tt.load"           => some .load
   | "tt.store"          => some .store
-  | "tt.expand_dims"    => some (.expand_dims 0)
-  | "tt.broadcast"      => some .broadcast
+  | "tt.get_program_id" =>
+    let axis := match rest with
+      | "y" :: _ => 1
+      | _        => 0
+    some (.get_program_id axis)
+  | "tt.expand_dims" =>
+    let axis := match rest with
+      | _ :: "{axis" :: "=" :: axisStr :: _ => axisStr.toNat?.getD 0
+      | _ => 0
+    some (.expand_dims axis)
+  | "tt.broadcast" =>
+    let shapeTok := rest.reverse.find? (fun t => t.startsWith "tensor<") |>.getD ""
+    let shape := ((shapeTok.splitOn "<").getD 1 "").splitOn "x"
+      |>.takeWhile (fun t => t.toNat?.isSome) |>.filterMap (·.toNat?)
+    some (.broadcast shape)
   | "tt.dot"            => some .dot
   | "tt.reduce"         => some (.reduce_sum 0)
-  | "arith.constant"    =>
-      let val := rest.filter (fun t => t.toInt?.isSome)
-                  |>.head? |>.bind String.toInt?
+  | "arith.constant" =>
+    if rest.any (fun t => t.startsWith "dense<") then
+      let denseTok := rest.find? (fun t => t.startsWith "dense<") |>.getD ""
+      let valStr := ((denseTok.splitOn "<").getD 1 "").splitOn ">" |>.head?.getD ""
+      let val : Int := valStr.toInt?.getD 0   -- non-integer literals (e.g. "0.000000e+00") are all 0 here
+      let shapeTok := rest.reverse.find? (fun t => t.startsWith "tensor<") |>.getD ""
+      let shape := ((shapeTok.splitOn "<").getD 1 "").splitOn "x"
+        |>.takeWhile (fun t => t.toNat?.isSome) |>.filterMap (·.toNat?)
+      some (.constant_tensor val shape)
+    else
+      let val := rest.filter (fun t => t.toInt?.isSome) |>.head? |>.bind String.toInt?
       some (.constant (val.getD 0))
   | "arith.cmpi"        =>
       -- extract the predicate (slt, sle, sgt, sge, eq, ne)
@@ -39,6 +67,10 @@ def parseOp (opName : String) (rest : List String := []) : Option TritonOp :=
   | "arith.divsi"       => some .divsi
   | "arith.addf"        => some .addf
   | "arith.mulf"        => some .mulf
+  | "arith.minsi" => some .minsi
+  | "arith.remsi" => some .remsi
+  | "arith.truncf" => some .truncf
+  | "arith.andi" => some .andi
   | _                   => none
 
 def isSSAVar (s : String) : Bool := s.startsWith "%"

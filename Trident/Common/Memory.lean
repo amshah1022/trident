@@ -23,6 +23,7 @@ Fields:
 -/
 structure MachineState where
   pid        : Nat
+  pid_y      : Nat := 0
   block_size : Nat
   grid_size  : Nat
   memory     : Nat → Int

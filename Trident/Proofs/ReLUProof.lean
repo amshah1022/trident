@@ -13,13 +13,13 @@ namespace Trident
 def compiledReLU : TritonKernel := [
   { result := "pid",    op := .get_program_id 0, args := [] },
   { result := "bstart", op := .muli,             args := ["pid", "bsize"] },
-  { result := "range",  op := .make_range,        args := [] },
+  { result := "range",  op := .make_range none,        args := [] },
   { result := "offset", op := .addi,             args := ["bstart", "range"] },
   { result := "xptrs",  op := .addptr,           args := ["x_base", "offset"] },
   { result := "optrs",  op := .addptr,           args := ["out_base", "offset"] },
   { result := "xvals",  op := .load,             args := ["xptrs"] },
   { result := "zero",   op := .constant 0,       args := [] },
-  { result := "zeros",  op := .splat,            args := ["zero"] },
+  { result := "zeros",  op := .splat [1024],            args := ["zero"] },
   { result := "ovals",  op := .maxsi,            args := ["zeros", "xvals"] },
   { result := "_",      op := .store,            args := ["optrs", "ovals"] }
 ]
