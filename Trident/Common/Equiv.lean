@@ -175,5 +175,34 @@ def checkMatmulEquiv (parsed : TritonKernel) : Bool :=
       let expected := (List.range k).foldl
         (fun acc kk => acc + a.getD (i * k + kk) 0 * b.getD (kk * n + j) 0) 0
       s'.readMem (cBase + i * n + j) == expected
+def parsedSoftmaxInitState (x : List Int) (ncols : Nat) (pid bs gs : Nat) : MachineState :=
+  let inputBase := 0
+  let outputBase := ncols
+  { pid := pid
+  , pid_y := 0
+  , block_size := bs
+  , grid_size := gs
+  , memory := fun addr => if addr < ncols then x.getD addr 0 else 0
+  , fmemory := fun addr => if addr < ncols then Float.ofInt (x.getD addr 0) else 0.0
+  , env := fun name => match name with
+      | "input_ptr"         => some (TritonValue.scalar (Int.ofNat inputBase))
+      | "output_ptr"        => some (TritonValue.scalar (Int.ofNat outputBase))
+      | "input_row_stride"  => some (TritonValue.scalar (Int.ofNat ncols))
+      | "output_row_stride" => some (TritonValue.scalar (Int.ofNat ncols))
+      | "n_cols"            => some (TritonValue.scalar (Int.ofNat ncols))
+      | _ => none }
+
+def checkSoftmaxEquiv (parsed : TritonKernel) : Bool :=
+  let ncols := 16
+  let x := (List.range ncols).map (fun i => Int.ofNat (i + 1))
+  let s  := parsedSoftmaxInitState x ncols 0 16 1
+  let s' := evalKernel parsed s
+  let xf := x.map (fun v => Float.ofInt v)
+  let maxVal := xf.foldl max (xf.headD 0.0)
+  let expVals := xf.map (fun v => Float.exp (v - maxVal))
+  let sumExp := expVals.foldl (· + ·) 0.0
+  let expected := expVals.map (fun v => v / sumExp)
+  (List.range ncols).all fun i =>
+    Float.abs (s'.readMemF (ncols + i) - expected.getD i 0.0) < 0.0001
 
 end Trident

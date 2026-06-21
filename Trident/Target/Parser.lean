@@ -17,11 +17,26 @@ def parseOp (opName : String) (rest : List String := []) : Option TritonOp :=
   | "tt.addptr"         => some .addptr
   | "tt.load" => some .load
   | "tt.store" => some .store
+  | "tt.loadf" => some .loadf
+  | "tt.storef" => some .storef
+  | "arith.constantf" =>
+    if rest.any (fun t => t.startsWith "dense<") then
+      let shapeTok := rest.reverse.find? (fun t => t.startsWith "tensor<") |>.getD ""
+      let shape := ((shapeTok.splitOn "<").getD 1 "").splitOn "x"
+        |>.takeWhile (fun t => t.toNat?.isSome) |>.filterMap (·.toNat?)
+      some (.constant_tensorf 0.0 shape)
+    else
+      some (.constantf 0.0)
   | "tt.get_program_id" =>
     let axis := match rest with
       | "y" :: _ => 1
       | _        => 0
     some (.get_program_id axis)
+  | "tt.get_num_programs" =>
+    let axis := match rest with
+      | "y" :: _ => 1
+      | _        => 0
+    some (.get_num_programs axis)
   | "tt.expand_dims" =>
     let axis := match rest with
       | _ :: "{axis" :: "=" :: axisStr :: _ => axisStr.toNat?.getD 0

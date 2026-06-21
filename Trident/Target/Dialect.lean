@@ -23,6 +23,7 @@ inductive TritonType where
 inductive TritonOp where
   -- ── Grid ops ──
   | get_program_id (axis : Nat)
+  | get_num_programs (axis : Nat)
 
   -- ── Range and pointer arithmetic ──
   | make_range (size : Option Nat)   -- was: | make_range
@@ -97,6 +98,7 @@ abbrev TritonKernel := List TritonInstr
 
 def TritonOp.arity : TritonOp → Nat
   | .get_program_id _ => 0
+  | .get_num_programs _ => 0
   | .constant _       => 0
   | .constant_tensor _ _ => 0
   | .constantf _      => 0

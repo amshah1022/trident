@@ -28,7 +28,8 @@ def evalOp (op : TritonOp) (args : List String) (s : MachineState)
 
   | .get_program_id axis =>
       some (scalar (Int.ofNat (if axis == 0 then s.pid else s.pid_y)))
-
+  | .get_num_programs _ =>
+      some (scalar (Int.ofNat s.grid_size))
   | .constant v =>
       some (scalar v)
 

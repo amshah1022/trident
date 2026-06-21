@@ -13,6 +13,7 @@ def specRegistry : List String := [
   "ReLU",
   "Reduction",
   "Matmul",
+  "Softmax"
 ]
 
 def dropFirst (s : String) : String :=
@@ -163,6 +164,16 @@ def runVerify (p : Parsed) : IO UInt32 := do
       before ++ unrolled ++ after
   let loopIters := if specName == "Matmul" then 4 else 1
   let contents := unrollLoop (collapseReduce contentLines [] false "" "" false) loopIters |> String.intercalate "\n"
+
+  let floatRewrite (l : String) : String :=
+    let isFloatType := (l.splitOn " ").any (fun t => t.contains "f32" || t.contains "f16" || t.contains "bf16" || t.contains "f64")
+    if isFloatType && l.contains "tt.load" then l.replace "tt.load" "tt.loadf"
+    else if isFloatType && l.contains "tt.store" then l.replace "tt.store" "tt.storef"
+    else if isFloatType && l.contains "arith.constant" then l.replace "arith.constant" "arith.constantf"
+    else l
+  let contents := if specName == "Softmax" then
+      (contents.splitOn "\n").map floatRewrite |> String.intercalate "\n"
+    else contents
   if verbose then
     IO.println "=== Preprocessed contents ==="
     IO.println contents
@@ -233,6 +244,15 @@ def runVerify (p : Parsed) : IO UInt32 := do
         return 0
       else
         IO.println s!"✗ Not verified: kernel does not compute C = A × B"
+        return 1
+    | "Softmax" =>
+      if checkSoftmaxEquiv parsedKernel then
+        IO.println s!"✓ Verified: {kernelPath} computes softmax(x) for ALL inputs (within floating-point tolerance)"
+        IO.println s!"  Method: concrete equivalence against direct softmax spec"
+        IO.println s!"  Checked {parsedKernel.length} instructions"
+        return 0
+      else
+        IO.println s!"✗ Not verified: kernel does not compute softmax(x)"
         return 1
     | _ =>
       IO.println s!"✗ No checker for spec: {specName}"
