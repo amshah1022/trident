@@ -527,4 +527,99 @@ def buildInitState
   , memory     := fun _ => 0
   , env        := extraEnv }
 
+-- ── Additional evalOp simp lemmas for proof engineering ──────────────────────
+-- These let proofs use specific targeted lemmas instead of unfolding the full
+-- evalOp match (which has 20+ cases and causes term explosion when used wholesale).
+
+@[simp]
+theorem evalOp_muli (args : List String) (s : MachineState) :
+    evalOp .muli args s =
+    match args with
+    | [a, b] =>
+        (s.lookup a).bind fun va =>
+        (s.lookup b).bind fun vb =>
+        TritonValue.zipWith (· * ·) va vb
+    | _ => none := by simp [evalOp]
+
+@[simp]
+theorem evalOp_splat (shape : List Nat) (args : List String) (s : MachineState) :
+    evalOp (.splat shape) args s =
+    match args with
+    | [v] => match s.lookup v with
+        | some (TritonValue.scalar x) =>
+            some (TritonValue.tensor shape (List.replicate (shape.foldl (· * ·) 1) x))
+        | some (TritonValue.fscalar x) =>
+            some (TritonValue.ftensor shape (List.replicate (shape.foldl (· * ·) 1) x))
+        | _ => none
+    | _ => none := by simp [evalOp]
+
+@[simp]
+theorem evalOp_addi (args : List String) (s : MachineState) :
+    evalOp .addi args s =
+    match args with
+    | [a, b] =>
+        (s.lookup a).bind fun va =>
+        (s.lookup b).bind fun vb =>
+        match va, vb with
+        | TritonValue.scalar x, TritonValue.scalar y => some (TritonValue.scalar (x + y))
+        | TritonValue.scalar x, TritonValue.tensor sh ys => some (TritonValue.tensor sh (ys.map (· + x)))
+        | TritonValue.tensor sh xs, TritonValue.scalar y => some (TritonValue.tensor sh (xs.map (· + y)))
+        | TritonValue.tensor s1 xs, TritonValue.tensor s2 ys =>
+            if s1 == s2 then some (TritonValue.tensor s1 ((xs.zip ys).map fun (x,y) => x + y)) else none
+        | _, _ => none
+    | _ => none := by simp [evalOp]
+
+@[simp]
+theorem evalOp_addf (args : List String) (s : MachineState) :
+    evalOp .addf args s =
+    match args with
+    | [a, b] =>
+        (s.lookup a).bind fun va =>
+        (s.lookup b).bind fun vb =>
+        match va, vb with
+        | TritonValue.scalar x, TritonValue.scalar y => some (TritonValue.scalar (x + y))
+        | TritonValue.scalar x, TritonValue.tensor sh ys => some (TritonValue.tensor sh (ys.map (· + x)))
+        | TritonValue.tensor sh xs, TritonValue.scalar y => some (TritonValue.tensor sh (xs.map (· + y)))
+        | TritonValue.tensor s1 xs, TritonValue.tensor s2 ys =>
+            if s1 == s2 then some (TritonValue.tensor s1 ((xs.zip ys).map fun (x,y) => x + y)) else none
+        | TritonValue.fscalar x, TritonValue.fscalar y => some (TritonValue.fscalar (x + y))
+        | TritonValue.fscalar x, TritonValue.ftensor sh ys => some (TritonValue.ftensor sh (ys.map (· + x)))
+        | TritonValue.ftensor sh xs, TritonValue.fscalar y => some (TritonValue.ftensor sh (xs.map (· + y)))
+        | TritonValue.ftensor s1 xs, TritonValue.ftensor s2 ys =>
+            if s1 == s2 then some (TritonValue.ftensor s1 ((xs.zip ys).map fun (x,y) => x + y)) else none
+        | _, _ => none
+    | _ => none := by simp [evalOp]
+
+@[simp]
+theorem evalOp_cmpi_slt (args : List String) (s : MachineState) :
+    evalOp .cmpi_slt args s =
+    match args with
+    | [a, b] =>
+        (s.lookup a).bind fun va =>
+        (s.lookup b).bind fun vb =>
+        match va, vb with
+        | TritonValue.tensor sh xs, TritonValue.tensor _ ys =>
+            some (TritonValue.tensor sh ((xs.zip ys).map fun (x, y) => if x < y then 1 else 0))
+        | TritonValue.scalar x, TritonValue.scalar y =>
+            some (TritonValue.scalar (if x < y then 1 else 0))
+        | _, _ => none
+    | _ => none := by simp [evalOp]
+
+@[simp]
+theorem evalOp_addptr (args : List String) (s : MachineState) :
+    evalOp .addptr args s =
+    match args with
+    | [p, o] => match s.lookup p, s.lookup o with
+        | some (TritonValue.scalar base), some (TritonValue.scalar off) =>
+            some (TritonValue.scalar (base + off))
+        | some (TritonValue.scalar base), some (TritonValue.tensor sh offs) =>
+            some (TritonValue.tensor sh (offs.map (· + base)))
+        | some (TritonValue.tensor sh1 bases), some (TritonValue.tensor sh2 offs) =>
+            if sh1 == sh2
+            then some (TritonValue.tensor sh1 ((bases.zip offs).map fun (b, o) => b + o))
+            else none
+        | _, _ => none
+    | _ => none := by simp [evalOp]
+
+
 end Trident

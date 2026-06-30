@@ -1,0 +1,240 @@
+
+═══════════════════════════════════════════════════════════════════════════════
+SESSION 2026-06-29 (cont.) — StatesFaithfulMem driver + load/store/make_range
+═══════════════════════════════════════════════════════════════════════════════
+
+PERSISTED & PROVEN (zero sorry, in Soundness.lean):
+- Checker.lean: 0 sorry (normalizeExpr_correct, symCheck_sound, all beq lemmas)
+- Symbolic.lean: 0 sorry (DecidableEq Expr)
+- load_tensor_faithful_when_memory_unchanged   (unmasked load)
+- store_tensor_faithful_when_memory_unchanged  (unmasked store)
+- zip_foldl_eq_range + 8 fold-projection lemmas (con/sym _foldl_ pid/bs/gs/env)
+- make_range arm of evalInstr_faithful (was sorry; symbolic now uses sizeOpt.getD)
+- StatesFaithfulMem DRIVER STACK (Section 7):
+    StatesFaithfulMem := StatesFaithful ∧ s.memory = mem
+    evalInstr_preserves_memory_of_ne_store
+    evalInstr_faithful_mem   (single per-instr dispatcher; load handled internally)
+    prefix_faithful_mem      (fold dispatcher over non-store prefix)
+    evalKernel_append / symEvalKernel_append
+    kernel_faithful_terminal_store  (CAPSTONE: prefix++[store] faithful end-to-end)
+- zip_add_getD (guard-independent list helper for addi/addf tensor+tensor)
+
+KEY ARCHITECTURE: load faithfulness REQUIRES s.memory = mem (Expr.load reads the
+fixed mem; concrete load reads current s.memory; agree only pre-store / no-RAW).
+StatesFaithfulMem carries this; store EXITS the regime (memory diverges) so it's a
+terminal transition. Driver = [non-store prefix] ++ [store]. This is the no-RAW
+class, the sound checkable restriction.
+
+REMAINING 4 sorry'd decls in Soundness: load_masked(431), store_masked(498),
+cmpi_slt(527), evalInstr_faithful(555 — has ~80 internal sorries: load/store arms
+now REDUNDANT since driver routes around them; + float/cmpi/exotic ops + the
+tensor+tensor arms of addi/addf/muli/splat that the tutorial actually hits).
+
+>>> QUEUED FIRST FOR NEXT SESSION (edits TRUSTED models — start clean) <
+GENUINE MODEL-FIDELITY GAP found this session:
+  Elementwise tensor+tensor (addi/muli/addf): concrete guards on SHAPE (sh==sh2),
+  symbolic symAdd/symMul has NO guard (binds with first tensor's length).
+  -> faithfulness FALSE for shape-mismatched operands. Latent soundness gap.
+DECISION (made with user): length-guard BOTH evaluators. Elementwise faithfulness
+  depends on element COUNT not shape. Sound for well-typed TTIR (shape-match <=>
+  length-match). Add shape/length-compat validation to PARSER as ingest gate;
+  soundness theorem assumes well-typed input. Then prove addi/muli/addf
+  tensor+tensor faithful UNIFORMLY (no per-kernel obligation).
+  hten already pins symbolic length = concrete vals.length (Soundness.lean:29),
+  which is why length is the natural alignment criterion.
+  addi tensor+tensor proof already validated in /tmp (shape-guarded form) — redo
+  under length guard after model edit. See decision comment block above
+  zipWith_add_getD' in Soundness.lean.
+
+PATH TO "any vector-add .ttir" (4 steps; we are mid-step-2):
+  1. [DONE] StatesFaithfulMem driver + load/store/make_range
+  2. [IN PROGRESS] close tutorial's compute-op tensor+tensor cases (needs model
+     fix above), extract per-op faithful lemmas, build tutorial hstep dispatcher,
+     prove initial StatesFaithfulMem, rewire symCheckTutorial_sound through
+     kernel_faithful_terminal_store. THIS retires the tutorial's sorry chain.
+  3. generalize init-state lemma (read kernel's actual declared args, not fixed list)
+  4. characterize which vector-add expr shapes normalizeExpr canonicalizes
+     = the real "any vector-add" class; CLI honestly reports in/out of class.
+
+NOTE: "any vector-add .ttir, zero per-file proof" = step 4, bounded by normalizer
+completeness (open-ended). Honest claim achievable: "any vector-add kernel whose
+output normalizes to the spec," with CLI reporting which side of the line.
+
+─── WELLFORMEDNESS DESIGN (path A, settled 2026-06-29) ───────────────────────
+Live-file findings:
+- TritonValue.tensor (shape : List Nat) (vals : List Int) — NO length enforcement
+  (Values.lean ~line 17). Same for ftensor.
+- Construction convention ALREADY USES shape-product as length:
+  Semantics.lean:47,271,550 use (List.replicate (shape.foldl (· * ·) 1) x).
+  Symbolic.lean:242 uses (shape.foldl (· * ·) 1) for splat length.
+  => WF predicate formalizes an EXISTING convention, not a new imposition.
+- Parser.lean (147 lines) extracts shapes from tensor<...> tokens but does NO
+  shape-compatibility validation. The ingest gate is genuinely new but localized.
+
+WF PREDICATE:
+  def TritonValue.WF : TritonValue → Prop
+    | tensor sh vals  => vals.length = sh.foldl (· * ·) 1
+    | ftensor sh vals => vals.length = sh.foldl (· * ·) 1
+    | _ => True
+
+WHY NO 59-SITE THREADING (the "not boilerplate" insight):
+  Don't carry WF as a running StatesFaithful invariant. Instead:
+  (1) Each op LOCALLY produces a wellformed tensor — provable per-op from its
+      construction (they use shape.foldl or are length-preserving maps/zips).
+  (2) Kernel ARGUMENTS (the only tensors not produced by an op) get WF from the
+      PARSER GATE at ingest.
+  => WF of any elementwise operand follows locally from whatever produced it.
+  => No global invariant threading; no per-kernel proof obligation.
+
+ELEMENTWISE FAITHFULNESS UNDER WF:
+  At addi/muli/addf tensor+tensor: concrete guards sh==sh2, symbolic (now)
+  guards length==length. With both operands WF: sh==sh2 ⟹ shape-products equal
+  ⟹ lengths equal. So in the concrete-binds branch (sh==sh2), the symbolic guard
+  also passes, both bind, zip aligns. In the sh≠sh2 branch, IF lengths also differ
+  both give none (faithful); the only residual case (sh≠sh2 but lengths equal) is
+  EXCLUDED by... still needs care — shape-product equal doesn't imply shape equal
+  (e.g. [2,3] vs [6] both product 6). So concrete (sh-guard) gives none but
+  symbolic (len-guard) binds => MISMATCH REMAINS for [2,3] vs [6].
+  RESOLUTION OPTIONS for next session (PICK ONE):
+    (a) parser gate also normalizes/rejects rank-ambiguous shapes so every tensor
+        in a vector-add kernel is rank-1 ([n]) — then shape==shape ⟺ length==length
+        exactly. Cleanest for vector-add (all tensors are [bs]).
+    (b) make symbolic track shape not just length (bigger change to SymValue).
+  LEAN: (a) — vector-add kernels are all rank-1; parser gate enforces rank-1 for
+  the supported class. Documents the supported class honestly.
+
+NEXT SESSION ORDER:
+  1. Define TritonValue.WF + SymValue side (or rank-1 restriction).
+  2. Parser gate: validate rank-1 + shape-compat on ingest (decidable, syntactic).
+  3. Prove addi/muli/addf tensor+tensor faithful under WF/rank-1 (redo /tmp proof).
+  4. Extract per-op faithful lemmas; build tutorial hstep dispatcher.
+  5. Prove initial StatesFaithfulMem; rewire symCheckTutorial_sound through
+     kernel_faithful_terminal_store. Retires tutorial sorry chain.
+─────────────────────────────────────────────────────────────────────────────
+
+─── CORRECTION after reading FULL live Parser.lean + Values.lean + Dialect.lean ───
+(2026-06-29, grounded in actual files not uploads)
+
+KEY CORRECTION to wellformedness design:
+- The text parser (parseKernelVerbose/parseLine) does NO shape validation. It
+  produces TritonInstr (op + string args) purely syntactically. TritonOp.arity
+  EXISTS (Dialect.lean:99) but is NOT called by the parser — the "used by parser
+  for validation" comment is aspirational; no validation pass exists.
+- CRUCIAL: shapes are NOT known at parse time. TritonValue tensors (which carry
+  shape : List Nat) only come into existence during evalKernel EXECUTION. So a
+  "parser gate checking tensor shape-compat" is IMPOSSIBLE as previously framed —
+  the parser has only op names + var refs, no shapes.
+
+REVISED ARCHITECTURE for wellformedness:
+  WF is a property OF THE EVALUATION, established per-op LOCALLY:
+  - Each op's evalOp PRODUCES a wellformed (rank-1, length-correct) tensor —
+    provable per-op from its construction (splat/make_range use shape.foldl;
+    addptr/addi/etc are length-preserving maps/zips).
+  - Therefore every operand at any elementwise use-site is WF by construction
+    from whatever produced it. No global StatesFaithful threading needed.
+  - The SUPPORTED-CLASS gate (rank-1 restriction) is a DECIDABLE PREDICATE over
+    the parsed TritonKernel instruction list (NOT the text parser), run before
+    verification. It can use symbolic shape inference over the instr list.
+
+EXISTING DUPLICATE TO RECONCILE:
+  Values.lean:93 ALREADY HAS `zipWith_add_getD (a b) (i) (h_len : a.length =
+  b.length)` — a complete proven lemma (handles in-bounds AND out-of-bounds).
+  I added a near-identical `zip_add_getD` to Soundness.lean this session.
+  NEXT SESSION: use the existing Values.lean one; remove my duplicate OR keep
+  only if signature differs usefully (mine needs hi : i < a.length; theirs
+  doesn't — theirs is more general, PREFER THEIRS).
+
+CONCRETE MODEL IS CONSISTENTLY SHAPE-GUARDED:
+  TritonValue.zipWith (Values.lean:54) guards on s1==s2 (full shape List equality).
+  evalOp addi/muli/etc mirror this. Symbolic now length-guards (this session).
+  For RANK-1 tensors ([n]): sh==sh2 ⟺ [n_a]==[n_b] ⟺ n_a==n_b ⟺ lengths equal.
+  So under rank-1 restriction the guards COINCIDE EXACTLY — no gap, faithfulness
+  closes. The [2,3]-vs-[6] ambiguity cannot arise (forced single-element shapes).
+
+NEXT SESSION ORDER (revised):
+  1. Define WF predicate: rank-1 + length-correct. Decide: prop on TritonValue
+     or restriction baked into per-op faithfulness hypotheses.
+  2. Per-op "produces WF rank-1 output" lemmas (local, from construction).
+  3. Re-prove addi/muli/addf tensor+tensor faithful under rank-1 (guards coincide).
+     Use existing Values.lean zipWith_add_getD; drop my Soundness duplicate.
+  4. Extract per-op faithful lemmas; tutorial hstep dispatcher.
+  5. Initial StatesFaithfulMem; rewire symCheckTutorial_sound through capstone.
+  6. (Class gate) decidable rank-1 predicate over TritonKernel for CLI honesty.
+─────────────────────────────────────────────────────────────────────────────
+
+─── PERSISTED: WF1 + bridge (2026-06-29, build green) ────────────────────────
+ADDED TO Values.lean (both persisted, build green, Soundness still 4 sorry):
+- TritonValue.WF1 : rank-1 wellformedness
+    | tensor sh vals  => sh = [vals.length]
+    | ftensor sh vals => sh = [vals.length]
+    | _ => True
+- wf1_shape_iff_length : (sha==shb) = (xs.length==ys.length) for WF1 tensors.
+    Proof: simp only [WF1] at hyps; subst; simp.
+  THIS IS THE KEYSTONE — makes concrete shape-guard = symbolic length-guard.
+
+VALIDATED IN /tmp (ready to wire next session) — addi tensor+tensor under WF1:
+  Structure (both branches, against live length-guarded symAdd):
+    obtain ga/gb from hten; simp only [WF1] at hwa hwb;
+    simp only [evalInstr,symEvalInstr,symEvalOp,evalOp,h_op,h_args,
+      MachineState.lookup,h_la,h_lb,Option.bind_some,SymState.lookup,hsga,hsgb,symAdd];
+    by_cases hlen : xs.length = ys.length
+    · have hshape : sha == shb := by rw [hwa,hwb]; simp [hlen]
+      rw [if_pos hshape]; rw [if_pos (by simp [hlen] : (xs.length==ys.length)=true)]
+      have hlen2 : xs.length = ((xs.zip ys).map (·.1+·.2)).length := by
+        simp [List.length_zip, hlen]
+      rw [hlen2]; apply bind_tensor_faithful hp hbs hgs hmem hsc hten hnone;
+      intro i hi; rw [← hlen2] at hi; simp only [evalExpr];
+      rw [hega i hi, hegb i (hlen ▸ hi), zip_add_getD xs ys i hi hlen]
+    · have hshape : (sha==shb)=false := by rw [hwa,hwb]; simp [hlen]
+      rw [if_neg (by simp [hshape])]; rw [if_neg (by simp [hlen])];
+      exact ⟨hp,hbs,hgs,hmem,hsc,hten,hnone⟩
+  (use the REAL private bind_tensor_faithful when pasting INTO Soundness.lean;
+   zip_add_getD already in Soundness.lean — note Values.lean ALSO has
+   zipWith_add_getD which is more general; reconcile the duplicate.)
+  muli/addf tensor+tensor = IDENTICAL structure, swap Expr.add->mul/float +
+  zip helper analog. Mechanical repeats once addi lands.
+
+NEXT SESSION immediate: paste addi-under-WF1 into Soundness addi tensor+tensor
+arm (the line ~684 sorry); repeat for muli/addf; then extract per-op lemmas,
+thread WF1 as hypothesis through evalInstr_faithful_mem's compute step, build
+tutorial dispatcher, rewire symCheckTutorial_sound through capstone.
+─────────────────────────────────────────────────────────────────────────────
+
+─── WF1 THREADING DECISION: OPTION 2 (local, no invariant) — settled w/ evidence ───
+(2026-06-29)
+
+DECISION: WF1 enters via per-op "produces WF1 output" lemmas, NOT as an invariant
+on StatesFaithful or StatesFaithfulMem. Elementwise ops take WF1 of operands as
+HYPOTHESES, discharged at the dispatcher from the produces-WF1 lemmas of the
+earlier instructions that produced those operands.
+
+EVIDENCE THIS IS SOUND & MINIMAL:
+- symVectorAddTutorialInitState binds ZERO tensor args (all scalars: a_base,
+  b_base, x_ptr, etc.). Every tensor in vector-add is OP-PRODUCED (make_range,
+  splat, addi, addptr, load). So operand WF1 is ALWAYS locally derivable from the
+  producing op. No tensor ever enters un-produced.
+- => NO changes to StatesFaithful (still 7 conjuncts), StatesFaithfulMem, or the
+  driver stack. Nothing re-tainted, nothing re-proven. ZERO threading cost.
+- Contrast Option 1 (8th conjunct): would re-establish WF1 at 59 construction
+  sites + re-taint every StatesFaithful proof. REJECTED.
+- Contrast Option 3 (bundle into StatesFaithfulMem): unnecessary — WF1 only needed
+  at elementwise use-sites, derivable there. REJECTED.
+
+VALIDATED IN /tmp (make_range produces WF1 — clean):
+  theorem make_range_produces_WF1 (sizeOpt args s) (sh vals)
+      (h : evalOp (.make_range sizeOpt) args s = some (tensor sh vals)) :
+      (tensor sh vals).WF1 := by
+    simp only [evalOp] at h; injection h with h; injection h with hsh hvals;
+    subst hsh; subst hvals; simp only [TritonValue.WF1];
+    simp [List.length_map, List.length_range]
+
+NEXT SESSION ORDER (revised, Option 2):
+  1. produces-WF1 lemmas: make_range (DONE /tmp), splat (rank-1 case, match-destructure),
+     addi/muli/addf/addptr (shape-preserving: output shape = input shape).
+  2. Paste addi/muli/addf tensor+tensor faithful-under-WF1 into their arms (proofs
+     validated; take hwa/hwb : WF1 hyps).
+  3. Extract per-op faithful lemmas (each takes operand WF1 hyps where elementwise).
+  4. Tutorial dispatcher: discharge each op's hstep; for elementwise ops supply
+     WF1 from the produces-WF1 lemma of the producing instruction.
+  5. Initial StatesFaithfulMem; rewire symCheckTutorial_sound through capstone.
+─────────────────────────────────────────────────────────────────────────────

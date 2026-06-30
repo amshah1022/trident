@@ -88,6 +88,15 @@ def zipWithF (f : Float → Float → Float) : TritonValue → TritonValue → O
       else none
   | _,              _              => none
 
+/-- Rank-1 wellformedness: tensor has single-dimension shape [n] with n = length.
+    This is the supported class for elementwise/vector-add kernels (all tensors
+    are [block_size]). Under WF1, concrete shape-equality and symbolic
+    length-equality coincide exactly. -/
+def WF1 : TritonValue → Prop
+  | tensor sh vals  => sh = [vals.length]
+  | ftensor sh vals => sh = [vals.length]
+  | _ => True
+
 end TritonValue
 -- Key lemma: getD of zip+map with equal-length lists
 theorem zipWith_add_getD (a b : List Int) (i : Nat) (h_len : a.length = b.length) :
@@ -112,5 +121,16 @@ theorem zipWith_add_getD (a b : List Int) (i : Nat) (h_len : a.length = b.length
     simp [List.getD, List.getElem?_eq_none hmap,
           List.getElem?_eq_none ha, List.getElem?_eq_none hb]
 
+
+-- Bridge: for rank-1 wellformed tensors, concrete shape-equality and symbolic
+-- length-equality are the SAME boolean. This is what makes the concrete
+-- (shape-guarded) and symbolic (length-guarded) elementwise ops provably agree.
+theorem wf1_shape_iff_length
+    (sha shb : List Nat) (xs ys : List Int)
+    (hwa : (TritonValue.tensor sha xs).WF1) (hwb : (TritonValue.tensor shb ys).WF1) :
+    (sha == shb) = (xs.length == ys.length) := by
+  simp only [TritonValue.WF1] at hwa hwb
+  subst hwa; subst hwb
+  simp
 
 end Trident

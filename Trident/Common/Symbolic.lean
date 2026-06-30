@@ -34,8 +34,101 @@ mutual
 end
 
 instance : BEq Expr := ⟨Expr.beq⟩
+-- exprBeqEq: Expr.beq e1 e2 = true → e1 = e2 (proved by mutual recursion)
+mutual
+  def exprBeqEq_aux : (e1 e2 : Expr) → Expr.beq e1 e2 = true → e1 = e2
+    | .lit a,        .lit b,        h => by simp [Expr.beq] at h; exact congrArg Expr.lit h
+    | .var s1 i1,    .var s2 i2,    h => by
+        simp [Expr.beq, Bool.and_eq_true] at h
+        obtain ⟨hs, hi⟩ := h; subst hs
+        exact congrArg (Expr.var s1) (by exact_mod_cast hi)
+    | .add a1 a2, .add b1 b2, h => by
+        simp [Expr.beq, Bool.and_eq_true] at h
+        have h1 := exprBeqEq_aux a1 b1 h.1; have h2 := exprBeqEq_aux a2 b2 h.2
+        subst h1; subst h2; rfl
+    | .mul a1 a2, .mul b1 b2, h => by
+        simp [Expr.beq, Bool.and_eq_true] at h
+        have h1 := exprBeqEq_aux a1 b1 h.1; have h2 := exprBeqEq_aux a2 b2 h.2
+        subst h1; subst h2; rfl
+    | .max a1 a2, .max b1 b2, h => by
+        simp [Expr.beq, Bool.and_eq_true] at h
+        have h1 := exprBeqEq_aux a1 b1 h.1; have h2 := exprBeqEq_aux a2 b2 h.2
+        subst h1; subst h2; rfl
+    | .load a, .load b, h => by
+        simp [Expr.beq] at h; exact congrArg Expr.load (exprBeqEq_aux a b h)
+    | .reduceSum as, .reduceSum bs, h => by
+        simp [Expr.beq] at h; exact congrArg Expr.reduceSum (exprListBeqEq_aux as bs h)
+    | .lit _,       .var _ _,     h => by simp [Expr.beq] at h
+    | .lit _,       .add _ _,     h => by simp [Expr.beq] at h
+    | .lit _,       .mul _ _,     h => by simp [Expr.beq] at h
+    | .lit _,       .max _ _,     h => by simp [Expr.beq] at h
+    | .lit _,       .load _,      h => by simp [Expr.beq] at h
+    | .lit _,       .reduceSum _, h => by simp [Expr.beq] at h
+    | .var _ _,     .lit _,       h => by simp [Expr.beq] at h
+    | .var _ _,     .add _ _,     h => by simp [Expr.beq] at h
+    | .var _ _,     .mul _ _,     h => by simp [Expr.beq] at h
+    | .var _ _,     .max _ _,     h => by simp [Expr.beq] at h
+    | .var _ _,     .load _,      h => by simp [Expr.beq] at h
+    | .var _ _,     .reduceSum _, h => by simp [Expr.beq] at h
+    | .add _ _,     .lit _,       h => by simp [Expr.beq] at h
+    | .add _ _,     .var _ _,     h => by simp [Expr.beq] at h
+    | .add _ _,     .mul _ _,     h => by simp [Expr.beq] at h
+    | .add _ _,     .max _ _,     h => by simp [Expr.beq] at h
+    | .add _ _,     .load _,      h => by simp [Expr.beq] at h
+    | .add _ _,     .reduceSum _, h => by simp [Expr.beq] at h
+    | .mul _ _,     .lit _,       h => by simp [Expr.beq] at h
+    | .mul _ _,     .var _ _,     h => by simp [Expr.beq] at h
+    | .mul _ _,     .add _ _,     h => by simp [Expr.beq] at h
+    | .mul _ _,     .max _ _,     h => by simp [Expr.beq] at h
+    | .mul _ _,     .load _,      h => by simp [Expr.beq] at h
+    | .mul _ _,     .reduceSum _, h => by simp [Expr.beq] at h
+    | .max _ _,     .lit _,       h => by simp [Expr.beq] at h
+    | .max _ _,     .var _ _,     h => by simp [Expr.beq] at h
+    | .max _ _,     .add _ _,     h => by simp [Expr.beq] at h
+    | .max _ _,     .mul _ _,     h => by simp [Expr.beq] at h
+    | .max _ _,     .load _,      h => by simp [Expr.beq] at h
+    | .max _ _,     .reduceSum _, h => by simp [Expr.beq] at h
+    | .load _,      .lit _,       h => by simp [Expr.beq] at h
+    | .load _,      .var _ _,     h => by simp [Expr.beq] at h
+    | .load _,      .add _ _,     h => by simp [Expr.beq] at h
+    | .load _,      .mul _ _,     h => by simp [Expr.beq] at h
+    | .load _,      .max _ _,     h => by simp [Expr.beq] at h
+    | .load _,      .reduceSum _, h => by simp [Expr.beq] at h
+    | .reduceSum _,  .lit _,      h => by simp [Expr.beq] at h
+    | .reduceSum _,  .var _ _,    h => by simp [Expr.beq] at h
+    | .reduceSum _,  .add _ _,    h => by simp [Expr.beq] at h
+    | .reduceSum _,  .mul _ _,    h => by simp [Expr.beq] at h
+    | .reduceSum _,  .max _ _,    h => by simp [Expr.beq] at h
+    | .reduceSum _,  .load _,     h => by simp [Expr.beq] at h
+  def exprListBeqEq_aux : (as bs : List Expr) → ExprList.beq as bs = true → as = bs
+    | [],    [],    _ => rfl
+    | [],    _::_,  h => by simp [ExprList.beq] at h
+    | _::_,  [],    h => by simp [ExprList.beq] at h
+    | a::as, b::bs, h => by
+        simp [ExprList.beq, Bool.and_eq_true] at h
+        have h1 := exprBeqEq_aux a b h.1; have h2 := exprListBeqEq_aux as bs h.2
+        subst h1; subst h2; rfl
+end
+
+mutual
+  def exprBeqRefl_aux : (e : Expr) → Expr.beq e e = true
+    | .lit _      => by simp [Expr.beq]
+    | .var _ _    => by simp [Expr.beq]
+    | .add e1 e2  => by simp [Expr.beq, exprBeqRefl_aux e1, exprBeqRefl_aux e2]
+    | .mul e1 e2  => by simp [Expr.beq, exprBeqRefl_aux e1, exprBeqRefl_aux e2]
+    | .max e1 e2  => by simp [Expr.beq, exprBeqRefl_aux e1, exprBeqRefl_aux e2]
+    | .load e     => by simp [Expr.beq, exprBeqRefl_aux e]
+    | .reduceSum es => by simp [Expr.beq, exprListBeqRefl_aux es]
+  def exprListBeqRefl_aux : (es : List Expr) → ExprList.beq es es = true
+    | []     => by simp [ExprList.beq]
+    | e::es  => by simp [ExprList.beq, exprBeqRefl_aux e, exprListBeqRefl_aux es]
+end
+
 instance : DecidableEq Expr := fun a b =>
-  if Expr.beq a b then isTrue (by sorry) else isFalse (by sorry)
+  if h : Expr.beq a b = true then
+    isTrue (exprBeqEq_aux a b h)
+  else
+    isFalse (fun heq => by subst heq; exact h (exprBeqRefl_aux a))
 
 -- ── Symbolic Values ───────────────────────────────────────────────────────────
 
@@ -116,8 +209,9 @@ def symAdd (a b : Option SymValue) : Option SymValue :=
       some (SymValue.tensor m (fun i => Expr.add x (ys i)))
   | some (SymValue.tensor m xs), some (SymValue.scalar y) =>
       some (SymValue.tensor m (fun i => Expr.add (xs i) y))
-  | some (SymValue.tensor m xs), some (SymValue.tensor _ ys) =>
-      some (SymValue.tensor m (fun i => Expr.add (xs i) (ys i)))
+  | some (SymValue.tensor m xs), some (SymValue.tensor n ys) =>
+      if m == n then some (SymValue.tensor m (fun i => Expr.add (xs i) (ys i)))
+      else none
   | _, _ => none
 
 def symMax (a b : Option SymValue) : Option SymValue :=
@@ -139,13 +233,13 @@ def symEvalOp (op : TritonOp) (args : List String) (s : SymState)
       some (SymValue.scalar (Expr.lit (Int.ofNat s.pid)))
   | .constant v =>
       some (SymValue.scalar (Expr.lit v))
-  | .make_range none =>
-      some (SymValue.tensor s.block_size (fun i => Expr.lit (Int.ofNat i)))
-  | .splat _ =>
+  | .make_range sizeOpt =>
+      some (SymValue.tensor (sizeOpt.getD s.block_size) (fun i => Expr.lit (Int.ofNat i)))
+  | .splat shape =>
       match args with
       | [v] => match s.lookup v with
         | some (SymValue.scalar e) =>
-            some (SymValue.tensor s.block_size (fun _ => e))
+            some (SymValue.tensor (shape.foldl (· * ·) 1) (fun _ => e))
         | _ => none
       | _ => none
   | .addptr =>
@@ -199,12 +293,9 @@ def symEvalOp (op : TritonOp) (args : List String) (s : SymState)
       | [a, b] => match s.lookup a, s.lookup b with
         | some (SymValue.scalar x), some (SymValue.scalar y) =>
             some (SymValue.scalar (Expr.mul x y))
-        | some (SymValue.tensor n xs), some (SymValue.scalar y) =>
-            some (SymValue.tensor n (fun i => Expr.mul (xs i) y))
-        | some (SymValue.scalar x), some (SymValue.tensor n ys) =>
-            some (SymValue.tensor n (fun i => Expr.mul x (ys i)))
-        | some (SymValue.tensor n xs), some (SymValue.tensor _ ys) =>
-            some (SymValue.tensor n (fun i => Expr.mul (xs i) (ys i)))
+        | some (SymValue.tensor n xs), some (SymValue.tensor k ys) =>
+            if n == k then some (SymValue.tensor n (fun i => Expr.mul (xs i) (ys i)))
+            else none
         | _, _ => none
       | _ => none
   | .load =>
@@ -324,6 +415,34 @@ def vectorAddSpecExpr (pid bs i n : Nat) : Expr :=
 
 def symCheckVectorAdd (kernel : TritonKernel) (pid bs gs n i : Nat) : Bool :=
   let s' := symEvalKernel kernel (symVectorAddInitState pid bs gs n)
+  let raw  := s'.memory (2 * n + pid * bs + i)
+  let norm := normalizeWithMem raw n
+  norm == vectorAddSpecExpr pid bs i n
+
+def symVectorAddTutorialInitState (pid bs gs n : Nat) : SymState :=
+  { pid        := pid
+  , block_size := bs
+  , grid_size  := gs
+  , memory     := fun addr =>
+      if addr < n then Expr.var "a" addr
+      else if addr < 2 * n then Expr.var "b" addr
+      else Expr.lit 0
+  , env        := fun v => match v with
+      | "arg0"       => some (SymValue.scalar (Expr.lit 0))
+      | "arg1"       => some (SymValue.scalar (Expr.lit (Int.ofNat n)))
+      | "arg2"       => some (SymValue.scalar (Expr.lit (Int.ofNat (2 * n))))
+      | "a_base"     => some (SymValue.scalar (Expr.lit 0))
+      | "b_base"     => some (SymValue.scalar (Expr.lit (Int.ofNat n)))
+      | "c_base"     => some (SymValue.scalar (Expr.lit (Int.ofNat (2 * n))))
+      | "bsize"      => some (SymValue.scalar (Expr.lit (Int.ofNat bs)))
+      | "x_ptr"      => some (SymValue.scalar (Expr.lit 0))
+      | "y_ptr"      => some (SymValue.scalar (Expr.lit (Int.ofNat n)))
+      | "output_ptr" => some (SymValue.scalar (Expr.lit (Int.ofNat (2 * n))))
+      | "n_elements" => some (SymValue.scalar (Expr.lit (Int.ofNat n)))
+      | _            => none }
+
+def symCheckVectorAddTutorial (kernel : TritonKernel) (pid bs gs n i : Nat) : Bool :=
+  let s' := symEvalKernel kernel (symVectorAddTutorialInitState pid bs gs n)
   let raw  := s'.memory (2 * n + pid * bs + i)
   let norm := normalizeWithMem raw n
   norm == vectorAddSpecExpr pid bs i n

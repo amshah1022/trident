@@ -88,7 +88,7 @@ structure TritonInstr where
   result : String
   op     : TritonOp
   args   : List String
-  deriving Repr
+  deriving Repr, BEq
 
 /-- A complete Triton kernel: a list of SSA instructions -/
 abbrev TritonKernel := List TritonInstr

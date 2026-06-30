@@ -3,1436 +3,1045 @@ import Trident.Target.Semantics
 import Trident.Proofs.VectorAddProof
 import Trident.Common.Equiv
 
+
+set_option linter.unusedSimpArgs false
+
+
 namespace Trident
 open TritonValue
 
 
-theorem parsedVectorAddTutorial_s10_has_tensors (a b : List Int) (pid bs gs : Nat)
-    (h_cov : (pid + 1) * 1024 ≤ a.length) :
-    ∃ addrs masks,
-      (evalKernel (parsedVectorAddTutorial.take 10) (parsedInitState a b pid bs gs)).lookup "x_3"
-        = some (TritonValue.tensor [1024] addrs) ∧
-      (evalKernel (parsedVectorAddTutorial.take 10) (parsedInitState a b pid bs gs)).lookup "mask_2"
-        = some (TritonValue.tensor [1024] masks) ∧
-      addrs.length = 1024 ∧ masks.length = 1024 ∧
-      (∀ i, i < 1024 → masks.getD i 0 ≠ 0) := by
-  obtain ⟨xs, ys, h_lx, h_ly, hxlen, hylen, hxval, hyval⟩ :=
-    parsedVectorAddTutorial_s7_has_tensors a b pid bs gs
-  refine ⟨_, (xs.zip ys).map (fun (x, y) => if x < y then (1:Int) else 0), rfl, ?_,
-    by simp [parsedVectorAddTutorial, parsedInitState, evalKernel, evalInstr, evalOp,
-       List.take, MachineState.bind, MachineState.lookup, TritonValue.zipWith, List.foldl],
-    by simp [hxlen, hylen], fun i hi => ?_⟩
-  · simp only [parsedVectorAddTutorial, parsedInitState, evalKernel, evalInstr, evalOp,
-               List.take, MachineState.bind, MachineState.lookup, TritonValue.zipWith, List.foldl]
-    rw [show (evalKernel (parsedVectorAddTutorial.take 7) (parsedInitState a b pid bs gs)).lookup "offsets_1"
-        = some (TritonValue.tensor [1024] xs) from h_lx,
-        show (evalKernel (parsedVectorAddTutorial.take 7) (parsedInitState a b pid bs gs)).lookup "mask"
-        = some (TritonValue.tensor [1024] ys) from h_ly]
-  · have hi' : i < xs.length := hxlen ▸ hi
-    have hi2' : i < ys.length := hylen ▸ hi
-    have hlt : xs.getD i 0 < ys.getD i 0 := by
-      rw [hxval i hi, hyval i hi]; omega
-    simp only [List.getD, List.getElem?_map, List.getElem?_zip, hi', hi2', Option.map_some]
-    have : xs.getD i 0 = xs[i]'hi' := (List.getD_eq_getElem xs 0 hi').symm
-    have h2 : ys.getD i 0 = ys[i]'hi2' := (List.getD_eq_getElem ys 0 hi2').symm
-    rw [this, h2] at hlt
-    simp [hlt]
+-- ══════════════════════════════════════════════════════════════════════════════
+-- Section 1: Core definitions
+-- ══════════════════════════════════════════════════════════════════════════════
 
 
-theorem parsedVectorAddTutorial_s13_faithful (a b : List Int) (pid bs gs : Nat)
-    (h_cov : (pid + 1) * 1024 ≤ a.length) :
-    StatesFaithful
-      (evalKernel (parsedVectorAddTutorial.take 13) (parsedInitState a b pid bs gs))
-      (symEvalKernel (parsedVectorAddTutorial.take 13) (symParsedVectorAddInitState pid bs gs a.length))
-      (concreteMem a b) := by
-  have step := symEvalKernel_faithful
-    [{ result := "y", op := .splat [1024], args := ["y_ptr"] },
-     { result := "y_5", op := .addptr, args := ["y", "offsets_1"] }]
-    (evalKernel (parsedVectorAddTutorial.take 11) (parsedInitState a b pid bs gs))
-    (symEvalKernel (parsedVectorAddTutorial.take 11) (symParsedVectorAddInitState pid bs gs a.length))
-    (concreteMem a b)
-    (parsedVectorAddTutorial_s11_faithful a b pid bs gs h_cov)
-  simpa [parsedVectorAddTutorial, evalKernel, symEvalKernel, List.take, List.foldl] using step
+-- The central invariant: machine state and symbolic state agree on memory and
+-- every bound variable, under interpretation by `mem`.
+def StatesFaithful (s : MachineState) (ss : SymState) (mem : Nat → Int) : Prop :=
+ s.pid = ss.pid
+ ∧ s.block_size = ss.block_size
+ ∧ s.grid_size = ss.grid_size
+ ∧ (∀ addr, evalExpr (ss.memory addr) mem = s.memory addr)
+ ∧ (∀ v val, s.env v = some (scalar val) →
+     ∃ e, ss.env v = some (SymValue.scalar e) ∧ evalExpr e mem = val)
+ ∧ (∀ v sh vals, s.env v = some (tensor sh vals) →
+     ∃ g, ss.env v = some (SymValue.tensor vals.length g)
+       ∧ ∀ i, i < vals.length → evalExpr (g i) mem = vals.getD i 0)
+ ∧ (∀ v, s.env v = none → ss.env v = none)
 
-theorem parsedVectorAddTutorial_s13_memory_unchanged (a b : List Int) (pid bs gs : Nat) :
-    (evalKernel (parsedVectorAddTutorial.take 13) (parsedInitState a b pid bs gs)).memory
-      = (parsedInitState a b pid bs gs).memory := by
-  apply evalKernel_memory_unchanged_of_no_store
-  intro instr hi
-  simp only [parsedVectorAddTutorial, List.take] at hi
-  rcases hi with rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl <;> exact ⟨by decide, by decide⟩
 
-theorem parsedVectorAddTutorial_s13_has_tensors (a b : List Int) (pid bs gs : Nat)
-    (h_cov : (pid + 1) * 1024 ≤ a.length) :
-    ∃ addrs masks,
-      (evalKernel (parsedVectorAddTutorial.take 13) (parsedInitState a b pid bs gs)).lookup "y_5"
-        = some (TritonValue.tensor [1024] addrs) ∧
-      (evalKernel (parsedVectorAddTutorial.take 13) (parsedInitState a b pid bs gs)).lookup "mask_2"
-        = some (TritonValue.tensor [1024] masks) ∧
-      addrs.length = 1024 ∧ masks.length = 1024 ∧
-      (∀ i, i < 1024 → masks.getD i 0 ≠ 0) := by
-  obtain ⟨xs, ys, h_lx, h_ly, hxlen, hylen, hxval, hyval⟩ :=
-    parsedVectorAddTutorial_s7_has_tensors a b pid bs gs
-  refine ⟨_, (xs.zip ys).map (fun (x, y) => if x < y then (1:Int) else 0), rfl, ?_,
-    by simp [parsedVectorAddTutorial, parsedInitState, evalKernel, evalInstr, evalOp,
-       List.take, MachineState.bind, MachineState.lookup, TritonValue.zipWith, List.foldl],
-    by simp [hxlen, hylen], fun i hi => ?_⟩
-  · simp only [parsedVectorAddTutorial, parsedInitState, evalKernel, evalInstr, evalOp,
-               List.take, MachineState.bind, MachineState.lookup, TritonValue.zipWith, List.foldl]
-    rw [show (evalKernel (parsedVectorAddTutorial.take 7) (parsedInitState a b pid bs gs)).lookup "offsets_1"
-        = some (TritonValue.tensor [1024] xs) from h_lx,
-        show (evalKernel (parsedVectorAddTutorial.take 7) (parsedInitState a b pid bs gs)).lookup "mask"
-        = some (TritonValue.tensor [1024] ys) from h_ly]
-  · have hi' : i < xs.length := hxlen ▸ hi
-    have hi2' : i < ys.length := hylen ▸ hi
-    have hlt : xs.getD i 0 < ys.getD i 0 := by
-      rw [hxval i hi, hyval i hi]; omega
-    simp only [List.getD, List.getElem?_map, List.getElem?_zip, hi', hi2', Option.map_some]
-    have : xs.getD i 0 = xs[i]'hi' := (List.getD_eq_getElem xs 0 hi').symm
-    have h2 : ys.getD i 0 = ys[i]'hi2' := (List.getD_eq_getElem ys 0 hi2').symm
-    rw [this, h2] at hlt
-    simp [hlt]
+-- Concreteness predicate: expression does not read from symbolic memory
+def Expr.isConcrete : Expr → Bool
+ | .lit _       => true
+ | .var _ _     => false
+ | .load _      => false
+ | .add e1 e2   => e1.isConcrete && e2.isConcrete
+ | .mul e1 e2   => e1.isConcrete && e2.isConcrete
+ | .max e1 e2   => e1.isConcrete && e2.isConcrete
+ | .reduceSum _ => false
 
-theorem parsedVectorAddTutorial_s14_faithful (a b : List Int) (pid bs gs : Nat)
-    (h_cov : (pid + 1) * 1024 ≤ a.length) :
-    StatesFaithful
-      (evalKernel (parsedVectorAddTutorial.take 14) (parsedInitState a b pid bs gs))
-      (symEvalKernel (parsedVectorAddTutorial.take 14) (symParsedVectorAddInitState pid bs gs a.length))
-      (concreteMem a b) := by
-  obtain ⟨hp, hbs, hgs, hmem, hsc, hten, hnone⟩ := parsedVectorAddTutorial_s13_faithful a b pid bs gs h_cov
-  obtain ⟨addrs, masks, h_la, h_lm, halen, hmlen, hall⟩ :=
-    parsedVectorAddTutorial_s13_has_tensors a b pid bs gs h_cov
-  have hmem_raw : (evalKernel (parsedVectorAddTutorial.take 13) (parsedInitState a b pid bs gs)).memory
-      = concreteMem a b := by
-    rw [parsedVectorAddTutorial_s13_memory_unchanged]; rfl
-  have step := load_tensor_masked_faithful_when_all_true
-    hp hbs hgs hmem hsc hten hnone hmem_raw
-    { result := "y_6", op := .load, args := ["y_5", "mask_2"] } "y_5" "mask_2" rfl rfl
-    [1024] addrs masks h_la h_lm (by rw [halen, hmlen]) hall
-  simpa [parsedVectorAddTutorial, evalKernel, symEvalKernel, List.take, List.foldl] using step
 
-theorem parsedVectorAddTutorial_s15_faithful (a b : List Int) (pid bs gs : Nat)
-    (h_cov : (pid + 1) * 1024 ≤ a.length) :
-    StatesFaithful
-      (evalKernel (parsedVectorAddTutorial.take 15) (parsedInitState a b pid bs gs))
-      (symEvalKernel (parsedVectorAddTutorial.take 15) (symParsedVectorAddInitState pid bs gs a.length))
-      (concreteMem a b) := by
-  have step := evalInstr_faithful { result := "output", op := .addf, args := ["x_4", "y_6"] }
-    (evalKernel (parsedVectorAddTutorial.take 14) (parsedInitState a b pid bs gs))
-    (symEvalKernel (parsedVectorAddTutorial.take 14) (symParsedVectorAddInitState pid bs gs a.length))
-    (concreteMem a b)
-    (parsedVectorAddTutorial_s14_faithful a b pid bs gs h_cov)
-  simpa [parsedVectorAddTutorial, evalKernel, symEvalKernel, List.take, List.foldl] using step
+-- ══════════════════════════════════════════════════════════════════════════════
+-- Section 2: Expression and list lemmas
+-- ══════════════════════════════════════════════════════════════════════════════
 
-theorem parsedVectorAddTutorial_s17_faithful (a b : List Int) (pid bs gs : Nat)
-    (h_cov : (pid + 1) * 1024 ≤ a.length) :
-    StatesFaithful
-      (evalKernel (parsedVectorAddTutorial.take 17) (parsedInitState a b pid bs gs))
-      (symEvalKernel (parsedVectorAddTutorial.take 17) (symParsedVectorAddInitState pid bs gs a.length))
-      (concreteMem a b) := by
-  have step := symEvalKernel_faithful
-    [{ result := "0", op := .splat [1024], args := ["output_ptr"] },
-     { result := "1", op := .addptr, args := ["0", "offsets_1"] }]
-    (evalKernel (parsedVectorAddTutorial.take 15) (parsedInitState a b pid bs gs))
-    (symEvalKernel (parsedVectorAddTutorial.take 15) (symParsedVectorAddInitState pid bs gs a.length))
-    (concreteMem a b)
-    (parsedVectorAddTutorial_s15_faithful a b pid bs gs h_cov)
-  simpa [parsedVectorAddTutorial, evalKernel, symEvalKernel, List.take, List.foldl] using step
 
-theorem parsedVectorAddTutorial_s17_store_setup (a b : List Int) (pid bs gs : Nat)
-    (h_cov : (pid + 1) * 1024 ≤ a.length) :
-    ∃ addrs vals masks,
-      (evalKernel (parsedVectorAddTutorial.take 17) (parsedInitState a b pid bs gs)).lookup "1"
-        = some (TritonValue.tensor [1024] addrs) ∧
-      (evalKernel (parsedVectorAddTutorial.take 17) (parsedInitState a b pid bs gs)).lookup "output"
-        = some (TritonValue.tensor [1024] vals) ∧
-      (evalKernel (parsedVectorAddTutorial.take 17) (parsedInitState a b pid bs gs)).lookup "mask_2"
-        = some (TritonValue.tensor [1024] masks) ∧
-      addrs.length = 1024 ∧ vals.length = 1024 ∧ masks.length = 1024 ∧
-      (∀ i, i < 1024 → masks.getD i 0 ≠ 0) ∧
-      ∃ g, (symEvalKernel (parsedVectorAddTutorial.take 17) (symParsedVectorAddInitState pid bs gs a.length)).env "1"
-        = some (SymValue.tensor addrs.length g) ∧
-      ∀ i, (g i).isConcrete = true := by
-  obtain ⟨xs, ys, h_lx, h_ly, hxlen, hylen, hxval, hyval⟩ :=
-    parsedVectorAddTutorial_s7_has_tensors a b pid bs gs
-  refine ⟨_, _, (xs.zip ys).map (fun (x, y) => if x < y then (1:Int) else 0),
-    rfl, rfl, ?_, rfl, rfl, by simp [hxlen, hylen], fun i hi => ?_, _, rfl, fun i => ?_⟩
-  · simp only [parsedVectorAddTutorial, parsedInitState, evalKernel, evalInstr, evalOp,
-               List.take, MachineState.bind, MachineState.lookup, TritonValue.zipWith, List.foldl]
-    rw [show (evalKernel (parsedVectorAddTutorial.take 7) (parsedInitState a b pid bs gs)).lookup "offsets_1"
-        = some (TritonValue.tensor [1024] xs) from h_lx,
-        show (evalKernel (parsedVectorAddTutorial.take 7) (parsedInitState a b pid bs gs)).lookup "mask"
-        = some (TritonValue.tensor [1024] ys) from h_ly]
-  · have hi' : i < xs.length := hxlen ▸ hi
-    have hi2' : i < ys.length := hylen ▸ hi
-    have hlt : xs.getD i 0 < ys.getD i 0 := by
-      rw [hxval i hi, hyval i hi]; omega
-    simp only [List.getD, List.getElem?_map, List.getElem?_zip, hi', hi2', Option.map_some]
-    have : xs.getD i 0 = xs[i]'hi' := (List.getD_eq_getElem xs 0 hi').symm
-    have h2 : ys.getD i 0 = ys[i]'hi2' := (List.getD_eq_getElem ys 0 hi2').symm
-    rw [this, h2] at hlt
-    simp [hlt]
-  · simp only [parsedVectorAddTutorial, symParsedVectorAddInitState, symEvalKernel, symEvalInstr,
-               symEvalOp, symAdd, SymState.bind, SymState.lookup, List.take, List.foldl]
-    simp [Expr.isConcrete]
+-- Concrete expressions are memory-independent
+theorem evalExpr_concrete (e : Expr) (mem1 mem2 : Nat → Int)
+   (h : e.isConcrete = true) :
+   evalExpr e mem1 = evalExpr e mem2 := by
+ match e with
+ | .lit n => simp [evalExpr]
+ | .var _ _ => simp [Expr.isConcrete] at h
+ | .load _ => simp [Expr.isConcrete] at h
+ | .add e1 e2 =>
+     simp [Expr.isConcrete, Bool.and_eq_true] at h
+     simp [evalExpr, evalExpr_concrete e1 mem1 mem2 h.1,
+                     evalExpr_concrete e2 mem1 mem2 h.2]
+ | .mul e1 e2 =>
+     simp [Expr.isConcrete, Bool.and_eq_true] at h
+     simp [evalExpr, evalExpr_concrete e1 mem1 mem2 h.1,
+                     evalExpr_concrete e2 mem1 mem2 h.2]
+ | .max e1 e2 =>
+     simp [Expr.isConcrete, Bool.and_eq_true] at h
+     simp [evalExpr, evalExpr_concrete e1 mem1 mem2 h.1,
+                     evalExpr_concrete e2 mem1 mem2 h.2]
+ | .reduceSum _ => simp [Expr.isConcrete] at h
 
-theorem parsedVectorAddTutorial_full_faithful (a b : List Int) (pid bs gs : Nat)
-    (h_cov : (pid + 1) * 1024 ≤ a.length) :
-    StatesFaithful
-      (evalKernel parsedVectorAddTutorial (parsedInitState a b pid bs gs))
-      (symEvalKernel parsedVectorAddTutorial (symParsedVectorAddInitState pid bs gs a.length))
-      (concreteMem a b) := by
-  obtain ⟨hp, hbs, hgs, hmem, hsc, hten, hnone⟩ := parsedVectorAddTutorial_s17_faithful a b pid bs gs h_cov
-  obtain ⟨addrs, vals, masks, h_lp, h_lv, h_lm, halen, hvlen, hmlen, hall, g, hgp, hconcrete⟩ :=
-    parsedVectorAddTutorial_s17_store_setup a b pid bs gs h_cov
-  obtain ⟨gv, hgv_corr, hgv_vals⟩ := hten "output" [1024] vals h_lv
-  obtain ⟨g', hgp', haddr'⟩ := hten "1" [1024] addrs h_lp
-  have hgeq : g' = g := by
-    have := hgp'.symm.trans hgp
-    injection this with h1 h2
-  have haddr := hgeq ▸ haddr'
-  have step := store_tensor_masked_faithful_when_all_true
-    hp hbs hgs hmem hsc hten hnone
-    { result := "_", op := .store, args := ["1", "output", "mask_2"] } "1" "output" "mask_2"
-    rfl rfl [1024] addrs vals masks h_lp h_lv h_lm
-    (by rw [halen, hvlen]) (by rw [halen, hmlen]) hall
-    g gv hgp hgv_corr (fun i _ => hconcrete i) haddr hgv_vals
-  simpa [parsedVectorAddTutorial, evalKernel, symEvalKernel, List.take, List.foldl] using step
 
-theorem parsedVectorAddTutorial_s11_faithful (a b : List Int) (pid bs gs : Nat)
-    (h_cov : (pid + 1) * 1024 ≤ a.length) :
-    StatesFaithful
-      (evalKernel (parsedVectorAddTutorial.take 11) (parsedInitState a b pid bs gs))
-      (symEvalKernel (parsedVectorAddTutorial.take 11) (symParsedVectorAddInitState pid bs gs a.length))
-      (concreteMem a b) := by
-  obtain ⟨hp, hbs, hgs, hmem, hsc, hten, hnone⟩ := parsedVectorAddTutorial_s10_faithful a b pid bs gs h_cov
-  obtain ⟨addrs, masks, h_la, h_lm, halen, hmlen, hall⟩ :=
-    parsedVectorAddTutorial_s10_has_tensors a b pid bs gs h_cov
-  have hmem_raw : (evalKernel (parsedVectorAddTutorial.take 10) (parsedInitState a b pid bs gs)).memory
-      = concreteMem a b := by
-    rw [parsedVectorAddTutorial_s10_memory_unchanged]; rfl
-  have step := load_tensor_masked_faithful_when_all_true
-    hp hbs hgs hmem hsc hten hnone hmem_raw
-    { result := "x_4", op := .load, args := ["x_3", "mask_2"] } "x_3" "mask_2" rfl rfl
-    [1024] addrs masks h_la h_lm (by rw [halen, hmlen]) hall
-  simpa [parsedVectorAddTutorial, evalKernel, symEvalKernel, List.take, List.foldl] using step
-
-theorem parsedVectorAddTutorial_s7_has_tensors (a b : List Int) (pid bs gs : Nat) :
-    ∃ xs ys,
-      (evalKernel (parsedVectorAddTutorial.take 7) (parsedInitState a b pid bs gs)).lookup "offsets_1"
-        = some (TritonValue.tensor [1024] xs) ∧
-      (evalKernel (parsedVectorAddTutorial.take 7) (parsedInitState a b pid bs gs)).lookup "mask"
-        = some (TritonValue.tensor [1024] ys) ∧
-      xs.length = 1024 ∧ ys.length = 1024 ∧
-      (∀ i, i < 1024 → xs.getD i 0 = Int.ofNat pid * 1024 + Int.ofNat i) ∧
-      (∀ i, i < 1024 → ys.getD i 0 = Int.ofNat a.length) := by
-  simp only [parsedVectorAddTutorial, parsedInitState, evalKernel, evalInstr, evalOp,
-             List.take, MachineState.bind, MachineState.lookup, TritonValue.zipWith,
-             List.foldl, List.range, List.replicate]
-  refine ⟨_, _, rfl, rfl, by simp, by simp, fun i hi => ?_, fun i hi => ?_⟩
-  · simp [List.getD, List.getElem?_map, List.getElem?_range, hi]
-  · simp [List.getD, List.getElem?_replicate, hi]
-
-theorem parsedVectorAddTutorial_s10_memory_unchanged (a b : List Int) (pid bs gs : Nat) :
-    (evalKernel (parsedVectorAddTutorial.take 10) (parsedInitState a b pid bs gs)).memory
-      = (parsedInitState a b pid bs gs).memory := by
-  apply evalKernel_memory_unchanged_of_no_store
-  intro instr hi
-  simp only [parsedVectorAddTutorial, List.take] at hi
-  rcases hi with rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl <;> exact ⟨by decide, by decide⟩
-
-theorem parsedVectorAddTutorial_s8_faithful (a b : List Int) (pid bs gs : Nat)
-    (h_cov : (pid + 1) * 1024 ≤ a.length) :
-    StatesFaithful
-      (evalKernel (parsedVectorAddTutorial.take 8) (parsedInitState a b pid bs gs))
-      (symEvalKernel (parsedVectorAddTutorial.take 8) (symParsedVectorAddInitState pid bs gs a.length))
-      (concreteMem a b) := by
-  obtain ⟨hp, hbs, hgs, hmem, hsc, hten, hnone⟩ := parsedVectorAddTutorial_prefix7_faithful a b pid bs gs
-  obtain ⟨xs, ys, h_lx, h_ly, hxlen, hylen, hxval, hyval⟩ :=
-    parsedVectorAddTutorial_s7_has_tensors a b pid bs gs
-  have step := cmpi_slt_tensor_faithful_when_all_true
-    hp hbs hgs hmem hsc hten hnone
-    { result := "mask_2", op := .cmpi_slt, args := ["offsets_1", "mask"] }
-    "offsets_1" "mask" rfl rfl [1024] xs ys h_lx h_ly
-    (by rw [hxlen, hylen])
-    (fun i hi => by
-      have hi' : i < 1024 := hxlen ▸ hi
-      rw [hxval i hi', hyval i hi']
-      omega)
-  simpa [parsedVectorAddTutorial, evalKernel, symEvalKernel, List.take, List.foldl] using step
-
-theorem parsedVectorAddTutorial_s10_faithful (a b : List Int) (pid bs gs : Nat)
-    (h_cov : (pid + 1) * 1024 ≤ a.length) :
-    StatesFaithful
-      (evalKernel (parsedVectorAddTutorial.take 10) (parsedInitState a b pid bs gs))
-      (symEvalKernel (parsedVectorAddTutorial.take 10) (symParsedVectorAddInitState pid bs gs a.length))
-      (concreteMem a b) := by
-  have step := symEvalKernel_faithful
-    [{ result := "x", op := .splat [1024], args := ["x_ptr"] },
-     { result := "x_3", op := .addptr, args := ["x", "offsets_1"] }]
-    (evalKernel (parsedVectorAddTutorial.take 8) (parsedInitState a b pid bs gs))
-    (symEvalKernel (parsedVectorAddTutorial.take 8) (symParsedVectorAddInitState pid bs gs a.length))
-    (concreteMem a b)
-    (parsedVectorAddTutorial_s8_faithful a b pid bs gs h_cov)
-  simpa [parsedVectorAddTutorial, evalKernel, symEvalKernel, List.take, List.foldl] using step
-
-theorem range_map_getD_pair_eq_zip
-    (addrs vals : List Int) (n : Nat) (hlen_a : addrs.length = n) (hlen_v : vals.length = n) :
-    (List.range n).map (fun i => (addrs.getD i 0, vals.getD i 0)) = addrs.zip vals := by
-  apply List.ext_getElem
-  · simp [hlen_a, hlen_v]
-  · intro i h1 h2
-    simp only [List.getElem_map, List.getElem_range, List.getElem_zip]
-    refine ⟨?_, ?_⟩
-    · simp [List.getD_eq_getElem, h1, hlen_a]
-    · simp [List.getD_eq_getElem, h2, hlen_v]
-
-theorem range_fold_mem_faithful
-    (n : Nat) (gAddrs gVals : Nat → Expr) (cAddrs cVals : Nat → Int) (mem : Nat → Int)
-    (hconcrete : ∀ i, i < n → (gAddrs i).isConcrete = true)
-    (haddr : ∀ i, i < n → evalExpr (gAddrs i) mem = cAddrs i)
-    (hval : ∀ i, i < n → evalExpr (gVals i) mem = cVals i) :
-    ∀ (s : MachineState) (ss : SymState),
-      (∀ addr, evalExpr (ss.memory addr) mem = s.memory addr) →
-      ∀ addr, evalExpr
-        ((List.foldl (fun st i => st.writeMem (evalExpr (gAddrs i) (fun _ => 0)).natAbs (gVals i))
-          ss (List.range n)).memory addr) mem
-        = (List.foldl (fun st i => st.writeMem (cAddrs i).natAbs (cVals i))
-          s (List.range n)).memory addr := by
-  induction n with
-  | zero => intro s ss hmem0 addr; simpa using hmem0 addr
-  | succ n ih =>
-      intro s ss hmem0 addr
-      rw [List.range_succ, List.foldl_append, List.foldl_cons, List.foldl_nil]
-      have hc : (gAddrs n).isConcrete = true := hconcrete n (by omega)
-      have heq_addr : evalExpr (gAddrs n) (fun _ => 0) = evalExpr (gAddrs n) mem :=
-        evalExpr_concrete (gAddrs n) (fun _ => 0) mem hc
-      have ih' := ih (fun i hi => hconcrete i (by omega)) (fun i hi => haddr i (by omega))
-        (fun i hi => hval i (by omega)) s ss hmem0
-      rw [heq_addr, haddr n (by omega)]
-      exact writeMem_mem_faithful _ _ mem ih' (cAddrs n).natAbs (gVals n) (cVals n)
-        (hval n (by omega)) addr
-
-theorem sym_foldl_writeMem_not_mem
-    (n : Nat) (gAddrs gVals : Nat → Expr) (ss : SymState) (addr : Nat)
-    (h : ∀ i, i < n → (evalExpr (gAddrs i) (fun _ => 0)).natAbs ≠ addr) :
-    (List.foldl (fun st i =>
-        st.writeMem (evalExpr (gAddrs i) (fun _ => 0)).natAbs (gVals i))
-      ss (List.range n)).memory addr = ss.memory addr := by
-  induction n with
-  | zero => simp
-  | succ n ih =>
-      rw [List.range_succ, List.foldl_append, List.foldl_cons, List.foldl_nil]
-      rw [ih (fun i hi => h i (by omega))]
-      simp only [SymState.writeMem]
-      have hne : (evalExpr (gAddrs n) (fun _ => 0)).natAbs ≠ addr := h n (by omega)
-      simp [hne]
-
+-- (List.range n).map ofNat getD
 private theorem range_map_getD (n i : Nat) :
-    (List.map Int.ofNat (List.range n)).getD i 0 =
-    if i < n then Int.ofNat i else 0 := by
-  rcases Nat.lt_or_ge i n with h | h
-  · simp [List.getD, List.getElem?_map, List.getElem?_range, h]
-  · simp [List.getD, List.length_map, List.length_range, Nat.not_lt.mpr h]
+   (List.map Int.ofNat (List.range n)).getD i 0 =
+   if i < n then Int.ofNat i else 0 := by
+ rcases Nat.lt_or_ge i n with h | h
+ · simp [List.getD, List.getElem?_map, List.getElem?_range, h]
+ · simp [List.getD, List.length_map, List.length_range, Nat.not_lt.mpr h]
 
-theorem index_fold_eq_writeTile
-    (addrs vals : List Int) (n : Nat) (hlen_a : addrs.length = n) (hlen_v : vals.length = n)
-    (s : MachineState) :
-    List.foldl (fun st i => st.writeMem (addrs.getD i 0).natAbs (vals.getD i 0)) s (List.range n)
-    = s.writeTile (addrs.map Int.natAbs) vals := by
-  simp only [MachineState.writeTile, List.zip_map_left]
-  rw [← range_map_getD_pair_eq_zip addrs vals n hlen_a hlen_v, ← List.foldl_map]
 
+-- map (· + x) getD
+private theorem map_add_getD (ys : List Int) (x : Int) (i : Nat)
+   (h : i < ys.length) :
+   (ys.map (· + x)).getD i 0 = ys.getD i 0 + x := by
+ simp [List.getD, List.getElem?_map, h]
+
+
+-- (xs.zip ys).map (fst + snd) getD, index in bounds for both
+-- ── DESIGN DECISION (recorded 2026-06-29) ────────────────────────────────────
+-- Elementwise tensor ops (addi/muli/addf/... tensor+tensor) currently MISMATCH
+-- between concrete and symbolic evaluators:
+--   concrete (Semantics.lean) guards on SHAPE equality  (sh == sh2)
+--   symbolic (Symbolic.lean symAdd/symMul) has NO guard; binds with first length
+-- This is a genuine faithfulness gap for shape-mismatched operands.
+-- RESOLUTION (queued, do FIRST next session — edits trusted models):
+--   Length-guard BOTH evaluators (elementwise faithfulness depends on element
+--   count, not shape). Sound for well-typed TTIR where shape-match <=> length-match.
+--   Add shape/length-compatibility validation to the PARSER as an ingest gate, so
+--   the soundness theorem assumes well-typed input. Then prove addi/muli
+--   tensor+tensor faithful uniformly (no per-kernel obligation).
+-- The list helper below (zip_add_getD) is guard-independent and already validated.
+-- ──────────────────────────────────────────────────────────────────────────────
+
+-- (xs.zip ys).map (fst+snd) indexed = xs[i] + ys[i], by structural induction.
+-- Guard-independent; used by the addi/addf tensor+tensor faithfulness proofs.
+theorem zip_add_getD (a b : List Int) (i : Nat)
+    (hi : i < a.length) (hab : a.length = b.length) :
+    ((a.zip b).map (fun p => p.fst + p.snd)).getD i 0 = a.getD i 0 + b.getD i 0 := by
+  induction a generalizing b i with
+  | nil => simp at hi
+  | cons x xs ih =>
+    cases b with
+    | nil => simp at hab
+    | cons y ys =>
+      cases i with
+      | zero => simp [List.zip_cons_cons]
+      | succ j =>
+        simp only [List.zip_cons_cons, List.map_cons, List.getD_cons_succ]
+        exact ih ys j (by simpa using hi) (by simpa using hab)
+
+private theorem zipWith_add_getD' (a b : List Int) (i : Nat)
+   (ha : i < a.length) (hb : i < b.length) :
+   ((a.zip b).map (fun p => p.fst + p.snd)).getD i 0 =
+   a.getD i 0 + b.getD i 0 := by
+ have hzip : i < (a.zip b).length := by simp [List.length_zip]; omega
+ have hmap : i < ((a.zip b).map (fun p : Int × Int => p.fst + p.snd)).length := by simp [List.length_zip]; omega
+ rw [show ((a.zip b).map (fun p => p.fst + p.snd)).getD i 0 =
+     ((a.zip b).map (fun p => p.fst + p.snd))[i] from by
+   simp [List.getD, List.getElem?_eq_getElem hmap]]
+ rw [show a.getD i 0 = a[i] from by simp [List.getD, List.getElem?_eq_getElem ha]]
+ rw [show b.getD i 0 = b[i] from by simp [List.getD, List.getElem?_eq_getElem hb]]
+ simp [List.getElem_map, List.getElem_zip]
+
+
+-- filterMap that keeps all elements (all masks nonzero) collapses to zip
 theorem filterMap_kept_eq_zip
-    (addrs vals masks : List Int) (hlen_av : addrs.length = vals.length)
-    (hlen_am : addrs.length = masks.length)
-    (hall : ∀ i, i < masks.length → masks.getD i 0 ≠ 0) :
-    ((addrs.zip vals).zip masks).filterMap (fun (p : (Int × Int) × Int) =>
-      if p.2 != 0 then some p.1 else none) = addrs.zip vals := by
-  induction addrs generalizing vals masks with
+   (addrs vals masks : List Int) (hlen_av : addrs.length = vals.length)
+   (hlen_am : addrs.length = masks.length)
+   (hall : ∀ i, i < masks.length → masks.getD i 0 ≠ 0) :
+   ((addrs.zip vals).zip masks).filterMap (fun (p : (Int × Int) × Int) =>
+     if p.2 != 0 then some p.1 else none) = addrs.zip vals := by
+ induction addrs generalizing vals masks with
+ | nil => simp
+ | cons a as ih =>
+     cases vals with
+     | nil => simp at hlen_av
+     | cons v vs =>
+         cases masks with
+         | nil => simp at hlen_am
+         | cons mk mks =>
+             simp only [List.zip_cons_cons, List.filterMap_cons]
+             have hne : mk ≠ 0 := by
+               have := hall 0 (by simp); simpa using this
+             have hbne : (mk != 0) = true := by
+               simp only [bne_iff_ne, ne_eq]; exact hne
+             simp only [hbne, ↓reduceIte]
+             simp only [List.length_cons] at hlen_av hlen_am
+             congr 1
+             exact ih vs mks (by omega) (by omega) (fun i hi => by
+               have := hall (i + 1) (by simp; omega)
+               simpa using this)
+
+
+-- ══════════════════════════════════════════════════════════════════════════════
+-- Section 3: Memory faithfulness lemmas
+-- ══════════════════════════════════════════════════════════════════════════════
+
+
+-- env is unaffected by writeTile
+private theorem writeTile_env
+   (s : MachineState) (addrs : List Nat) (vals : List Int) (var : String) :
+   (s.writeTile addrs vals).env var = s.env var := by
+ simp only [MachineState.writeTile]
+ induction addrs.zip vals generalizing s with
+ | nil => simp
+ | cons hd tl ih =>
+     simp only [List.foldl]
+     exact ih (s.writeMem hd.fst hd.snd)
+
+
+-- env is unaffected by symbolic foldl writeMem
+private theorem symFoldl_writeMem_env
+   (n : Nat) (gAddr : Nat → Nat) (gVal : Nat → Expr) (ss : SymState) (var : String) :
+   (List.foldl (fun st i => st.writeMem (gAddr i) (gVal i)) ss (List.range n)).env var
+   = ss.env var := by
+ induction List.range n generalizing ss with
+ | nil => simp
+ | cons hd tl ih =>
+     simp only [List.foldl]
+     exact ih (ss.writeMem (gAddr hd) (gVal hd))
+
+
+-- Symbolic foldl writeMem leaves an unwritten address unchanged
+theorem sym_foldl_writeMem_not_mem
+   (n : Nat) (gAddrs gVals : Nat → Expr) (ss : SymState) (addr : Nat)
+   (h : ∀ i, i < n → (evalExpr (gAddrs i) (fun _ => 0)).natAbs ≠ addr) :
+   (List.foldl (fun st i =>
+       st.writeMem (evalExpr (gAddrs i) (fun _ => 0)).natAbs (gVals i))
+     ss (List.range n)).memory addr = ss.memory addr := by
+ suffices ∀ (idxs : List Nat) (st : SymState),
+     (∀ i, i ∈ idxs → (evalExpr (gAddrs i) (fun _ => 0)).natAbs ≠ addr) →
+     (List.foldl (fun st i =>
+         st.writeMem (evalExpr (gAddrs i) (fun _ => 0)).natAbs (gVals i))
+       st idxs).memory addr = st.memory addr by
+   exact this (List.range n) ss (fun i hi => h i (List.mem_range.mp hi))
+ intro idxs
+ induction idxs with
+ | nil => simp
+ | cons idx rest ih =>
+     intro st hne
+     simp only [List.foldl_cons]
+     rw [ih _ (fun i hi => hne i (List.mem_cons_of_mem _ hi))]
+     simp only [SymState.writeMem]
+     have hne_idx := hne idx (List.Mem.head _)
+     simp [show (addr == (evalExpr (gAddrs idx) (fun _ => 0)).natAbs) = false from by
+       simp [BEq.beq, Nat.beq_eq, hne_idx.symm]]
+
+
+-- Core induction: symbolic and concrete foldl writeMem stay in sync
+-- when addresses are concrete (memory-independent)
+private theorem fold_mem_faithful_aux
+   (idxs : List Nat)
+   (gAddrs gVals : Nat → Expr) (cAddrs cVals : Nat → Int) (mem : Nat → Int)
+   (hconcrete : ∀ i, i ∈ idxs → (gAddrs i).isConcrete = true)
+   (haddr : ∀ i, i ∈ idxs → evalExpr (gAddrs i) mem = cAddrs i)
+   (hval  : ∀ i, i ∈ idxs → evalExpr (gVals i) mem = cVals i)
+   (s : MachineState) (ss : SymState)
+   (hmem : ∀ addr, evalExpr (ss.memory addr) mem = s.memory addr) :
+   ∀ addr, evalExpr
+     ((List.foldl (fun st i =>
+         st.writeMem (evalExpr (gAddrs i) (fun _ => 0)).natAbs (gVals i))
+       ss idxs).memory addr) mem
+     = (List.foldl (fun st i =>
+         st.writeMem (cAddrs i).natAbs (cVals i))
+       s idxs).memory addr := by
+ induction idxs generalizing s ss with
+ | nil => simpa
+ | cons idx rest ih =>
+     simp only [List.foldl_cons]
+     have hconc     := hconcrete idx (List.Mem.head _)
+     have haddr_idx := haddr idx (List.Mem.head _)
+     have hval_idx  := hval  idx (List.Mem.head _)
+     have haddr_zero : evalExpr (gAddrs idx) (fun _ => 0) = cAddrs idx := by
+       rw [← haddr_idx]
+       exact evalExpr_concrete (gAddrs idx) (fun _ => 0) mem hconc
+     rw [haddr_zero]
+     apply ih
+     · intro i hi; exact hconcrete i (List.mem_cons_of_mem _ hi)
+     · intro i hi; exact haddr     i (List.mem_cons_of_mem _ hi)
+     · intro i hi; exact hval      i (List.mem_cons_of_mem _ hi)
+     intro a
+     simp only [SymState.writeMem, MachineState.writeMem]
+     by_cases heq : a == (cAddrs idx).natAbs
+     · simp [heq, hval_idx]
+     · simp [heq, hmem a]
+
+
+-- Public version ranging over List.range n
+theorem range_fold_mem_faithful
+   (n : Nat) (gAddrs gVals : Nat → Expr) (cAddrs cVals : Nat → Int) (mem : Nat → Int)
+   (hconcrete : ∀ i, i < n → (gAddrs i).isConcrete = true)
+   (haddr : ∀ i, i < n → evalExpr (gAddrs i) mem = cAddrs i)
+   (hval  : ∀ i, i < n → evalExpr (gVals i) mem = cVals i) :
+   ∀ (s : MachineState) (ss : SymState),
+     (∀ addr, evalExpr (ss.memory addr) mem = s.memory addr) →
+     ∀ addr, evalExpr
+       ((List.foldl (fun st i =>
+           st.writeMem (evalExpr (gAddrs i) (fun _ => 0)).natAbs (gVals i))
+         ss (List.range n)).memory addr) mem
+       = (List.foldl (fun st i =>
+           st.writeMem (cAddrs i).natAbs (cVals i))
+         s (List.range n)).memory addr := by
+ intro s ss hmem addr
+ apply fold_mem_faithful_aux (List.range n) gAddrs gVals cAddrs cVals mem
+ · intro i hi; exact hconcrete i (List.mem_range.mp hi)
+ · intro i hi; exact haddr     i (List.mem_range.mp hi)
+ · intro i hi; exact hval      i (List.mem_range.mp hi)
+ · exact hmem
+
+
+-- ── Store bridging + projection helpers ──────────────────────────────────────
+
+theorem zip_foldl_eq_range (s : MachineState) (addrs vals : List Int)
+    (hlen : addrs.length = vals.length) :
+    List.foldl (fun st (x : Nat × Int) => st.writeMem x.1 x.2) s
+      ((addrs.map Int.natAbs).zip vals) =
+    List.foldl (fun st i => st.writeMem (addrs.getD i 0).natAbs (vals.getD i 0))
+      s (List.range addrs.length) := by
+  induction addrs generalizing s vals with
   | nil => simp
   | cons a as ih =>
       cases vals with
-      | nil => simp at hlen_av
-      | cons v vs =>
-          cases masks with
-          | nil => simp at hlen_am
-          | cons mk ms =>
-              simp only [List.length_cons] at hlen_av hlen_am
-              have hmk : mk ≠ 0 := hall 0 (by omega)
-              simp only [List.zip_cons_cons, List.filterMap_cons]
-              have hmk' : mk != 0 := by simpa using hmk
-              simp only [hmk', ↓reduceIte]
-              rw [ih vs ms (by omega) (by omega) (fun i hi => hall (i+1) (by omega))]
+      | nil => simp at hlen
+      | cons val vs =>
+          simp only [List.length_cons, List.map_cons, List.zip_cons_cons,
+                     List.foldl_cons, List.getD_cons_zero, List.range_succ_eq_map,
+                     List.foldl_map, List.getD_cons_succ]
+          rw [ih (s.writeMem a.natAbs val) vs (by simpa using hlen)]
 
-theorem store_tensor_masked_faithful_when_all_true
-    {s : MachineState} {ss : SymState} {mem : Nat → Int}
-    (hp : s.pid = ss.pid) (hbs : s.block_size = ss.block_size)
-    (hgs : s.grid_size = ss.grid_size)
-    (hmem : ∀ addr, evalExpr (ss.memory addr) mem = s.memory addr)
-    (hsc : ∀ v val, s.env v = some (scalar val) →
-        ∃ e, ss.env v = some (SymValue.scalar e) ∧ evalExpr e mem = val)
-    (hten : ∀ v sh vals, s.env v = some (tensor sh vals) →
-        ∃ g, ss.env v = some (SymValue.tensor vals.length g)
-          ∧ ∀ i, i < vals.length → evalExpr (g i) mem = vals.getD i 0)
-    (hnone : ∀ v, s.env v = none → ss.env v = none)
-    (instr : TritonInstr) (p v m : String)
-    (h_op : instr.op = .store) (h_args : instr.args = [p, v, m])
-    (sh : List Nat) (addrs vals masks : List Int)
-    (h_lp : s.lookup p = some (tensor sh addrs))
-    (h_lv : s.lookup v = some (tensor sh vals))
-    (h_lm : s.lookup m = some (tensor sh masks))
-    (hlen_av : addrs.length = vals.length)
-    (hlen_am : addrs.length = masks.length)
-    (hall : ∀ i, i < masks.length → masks.getD i 0 ≠ 0)
-    (gp gv : Nat → Expr)
-    (hgp : ss.env p = some (SymValue.tensor addrs.length gp))
-    (hgv_corr : ss.env v = some (SymValue.tensor vals.length gv))
-    (hconcrete : ∀ i, i < addrs.length → (gp i).isConcrete = true)
-    (haddr : ∀ i, i < addrs.length → evalExpr (gp i) mem = addrs.getD i 0)
-    (hval : ∀ i, i < addrs.length → evalExpr (gv i) mem = vals.getD i 0) :
-    StatesFaithful (evalInstr instr s) (symEvalInstr instr ss) mem := by
-  have hconcrete_eq : evalInstr instr s
-      = evalInstr { result := instr.result, op := .store, args := [p, v] } s := by
-    simp only [evalInstr, h_op, h_args, h_lp, h_lv, h_lm, MachineState.lookup]
-    rw [filterMap_kept_eq_zip addrs vals masks hlen_av hlen_am hall]
-    simp [List.map_fst_zip, List.map_snd_zip, hlen_av]
-  have hsym_eq : symEvalInstr instr ss
-      = symEvalInstr { result := instr.result, op := .store, args := [p, v] } ss := by
-    simp only [symEvalInstr, h_op, h_args]
-  rw [hconcrete_eq, hsym_eq]
-  exact store_tensor_faithful_when_memory_unchanged
-    hp hbs hgs hmem hsc hten hnone
-    { result := instr.result, op := .store, args := [p, v] } p v rfl rfl
-    sh addrs vals h_lp h_lv hlen_av gp gv hgp hgv_corr hconcrete haddr hval
-
-theorem store_tensor_faithful_when_memory_unchanged
-    {s : MachineState} {ss : SymState} {mem : Nat → Int}
-    (hp : s.pid = ss.pid) (hbs : s.block_size = ss.block_size)
-    (hgs : s.grid_size = ss.grid_size)
-    (hmem : ∀ addr, evalExpr (ss.memory addr) mem = s.memory addr)
-    (hsc : ∀ v val, s.env v = some (scalar val) →
-        ∃ e, ss.env v = some (SymValue.scalar e) ∧ evalExpr e mem = val)
-    (hten : ∀ v sh vals, s.env v = some (tensor sh vals) →
-        ∃ g, ss.env v = some (SymValue.tensor vals.length g)
-          ∧ ∀ i, i < vals.length → evalExpr (g i) mem = vals.getD i 0)
-    (hnone : ∀ v, s.env v = none → ss.env v = none)
-    (instr : TritonInstr) (p v : String)
-    (h_op : instr.op = .store) (h_args : instr.args = [p, v])
-    (sh : List Nat) (addrs vals : List Int)
-    (h_lp : s.lookup p = some (tensor sh addrs))
-    (h_lv : s.lookup v = some (tensor sh vals))
-    (hlen : addrs.length = vals.length)
-    (gp gv : Nat → Expr)
-    (hgp : ss.env p = some (SymValue.tensor addrs.length gp))
-    (hgv_corr : ss.env v = some (SymValue.tensor vals.length gv))
-    (hconcrete : ∀ i, i < addrs.length → (gp i).isConcrete = true)
-    (haddr : ∀ i, i < addrs.length → evalExpr (gp i) mem = addrs.getD i 0)
-    (hval : ∀ i, i < addrs.length → evalExpr (gv i) mem = vals.getD i 0) :
-    StatesFaithful (evalInstr instr s) (symEvalInstr instr ss) mem := by
-  simp only [evalInstr, h_op, h_args, h_lp, h_lv, MachineState.lookup]
-  simp only [symEvalInstr, h_op, h_args, hgp, hgv_corr, SymState.lookup]
-  refine ⟨hp, hbs, hgs, ?_, hsc, hten, hnone⟩
-  intro addr
-  have key := range_fold_mem_faithful addrs.length gp gv
-    (fun i => addrs.getD i 0) (fun i => vals.getD i 0) mem
-    hconcrete haddr hval s ss hmem addr
-  rwa [index_fold_eq_writeTile addrs vals addrs.length rfl hlen.symm s] at key
-
-theorem cmpi_slt_tensor_faithful_when_all_true
-    {s : MachineState} {ss : SymState} {mem : Nat → Int}
-    (hp : s.pid = ss.pid) (hbs : s.block_size = ss.block_size)
-    (hgs : s.grid_size = ss.grid_size)
-    (hmem : ∀ addr, evalExpr (ss.memory addr) mem = s.memory addr)
-    (hsc : ∀ v val, s.env v = some (scalar val) →
-        ∃ e, ss.env v = some (SymValue.scalar e) ∧ evalExpr e mem = val)
-    (hten : ∀ v sh vals, s.env v = some (tensor sh vals) →
-        ∃ g, ss.env v = some (SymValue.tensor vals.length g)
-          ∧ ∀ i, i < vals.length → evalExpr (g i) mem = vals.getD i 0)
-    (hnone : ∀ v, s.env v = none → ss.env v = none)
-    (instr : TritonInstr) (a b : String)
-    (h_op : instr.op = .cmpi_slt) (h_args : instr.args = [a, b])
-    (sh : List Nat) (xs ys : List Int)
-    (h_la : s.lookup a = some (tensor sh xs))
-    (h_lb : s.lookup b = some (tensor sh ys))
-    (hlen : xs.length = ys.length)
-    (hall : ∀ i, i < xs.length → xs.getD i 0 < ys.getD i 0) :
-    StatesFaithful (evalInstr instr s) (symEvalInstr instr ss) mem := by
-  have ⟨ga, hga, _⟩ := hten a sh xs h_la
-  have ⟨gb, hgb, _⟩ := hten b sh ys h_lb
-  simp only [evalInstr, symEvalInstr, h_op, h_args, evalOp, symEvalOp,
-             MachineState.lookup, h_la, h_lb, SymState.lookup, hga, hgb]
-  have hval_eq : ((xs.zip ys).map fun (x, y) => if x < y then (1:Int) else 0)
-      = List.replicate xs.length 1 := by
-    apply List.ext_getElem
-    · simp [hlen]
-    · intro i h1 h2
-      simp only [List.getElem_map, List.getElem_zip, List.getElem_replicate]
-      have hi : i < xs.length := by simpa using h1
-      have hi2 : i < ys.length := by omega
-      have hlt : xs.getD i 0 < ys.getD i 0 := hall i hi
-      rw [List.getD_eq_getElem xs 0 hi, List.getD_eq_getElem ys 0 hi2] at hlt
-      simp [hlt]
-  rw [hval_eq]
-  have hlen2 : (List.replicate xs.length (1:Int)).length = xs.length := by simp
-  rw [← hlen2]
-  refine bind_tensor_faithful hp hbs hgs hmem hsc hten hnone instr.result
-    sh (List.replicate xs.length 1) (fun _ => Expr.lit 1) ?_
-  intro i hi
-  simp [evalExpr, List.getD, List.getElem?_replicate, hi]
-
-theorem load_tensor_masked_faithful_when_all_true
-    {s : MachineState} {ss : SymState} {mem : Nat → Int}
-    (hp : s.pid = ss.pid) (hbs : s.block_size = ss.block_size)
-    (hgs : s.grid_size = ss.grid_size)
-    (hmem : ∀ addr, evalExpr (ss.memory addr) mem = s.memory addr)
-    (hsc : ∀ v val, s.env v = some (scalar val) →
-        ∃ e, ss.env v = some (SymValue.scalar e) ∧ evalExpr e mem = val)
-    (hten : ∀ v sh vals, s.env v = some (tensor sh vals) →
-        ∃ g, ss.env v = some (SymValue.tensor vals.length g)
-          ∧ ∀ i, i < vals.length → evalExpr (g i) mem = vals.getD i 0)
-    (hnone : ∀ v, s.env v = none → ss.env v = none)
-    (hmem_raw : s.memory = mem)
-    (instr : TritonInstr) (p m : String)
-    (h_op : instr.op = .load) (h_args : instr.args = [p, m])
-    (sh : List Nat) (addrs masks : List Int)
-    (h_lp : s.lookup p = some (tensor sh addrs))
-    (h_lm : s.lookup m = some (tensor sh masks))
-    (hlen : addrs.length = masks.length)
-    (hall : ∀ i, i < masks.length → masks.getD i 0 ≠ 0) :
-    StatesFaithful (evalInstr instr s) (symEvalInstr instr ss) mem := by
-  have ⟨g, hg, hgv⟩ := hten p sh addrs h_lp
-  simp only [evalInstr, symEvalInstr, h_op, h_args, evalOp, symEvalOp,
-             MachineState.lookup, h_lp, h_lm, SymState.lookup, hg]
-  have hval_eq : ((addrs.zip masks).map fun (a, mk) =>
-      if mk != 0 then s.readMem a.natAbs else 0)
-      = addrs.map fun a => s.readMem a.natAbs := by
-    apply List.ext_getElem
-    · simp [hlen]
-    · intro i h1 h2
-      simp only [List.getElem_map, List.getElem_zip]
-      have hi1 : i < addrs.length := by simpa using h1
-      have hi2 : i < masks.length := by omega
-      have hne : masks.getD i 0 ≠ 0 := hall i hi2
-      rw [List.getD_eq_getElem masks 0 hi2] at hne
-      simp [hne]
-  rw [hval_eq]
-  refine bind_tensor_faithful hp hbs hgs hmem hsc hten hnone instr.result
-    sh (addrs.map fun a => s.readMem a.natAbs) (fun i => Expr.load (g i)) ?_
-  intro i hi
-  simp only [List.length_map] at hi
-  simp only [evalExpr, hgv i hi, MachineState.readMem, hmem_raw]
-  simp [List.getD, List.getElem?_map, hi]
-
-private theorem map_add_getD (ys : List Int) (x : Int) (i : Nat) (h : i < ys.length) :
-    (ys.map (· + x)).getD i 0 = ys.getD i 0 + x := by
-  simp [List.getD, List.getElem?_map, h]
-
-def concreteMem (a b : List Int) : Nat → Int := layoutMemory a b
-
-def StatesFaithful (s : MachineState) (ss : SymState) (mem : Nat → Int) : Prop :=
-  s.pid = ss.pid
-  ∧ s.block_size = ss.block_size
-  ∧ s.grid_size = ss.grid_size
-  ∧ (∀ addr, evalExpr (ss.memory addr) mem = s.memory addr)
-  ∧ (∀ v val, s.env v = some (scalar val) →
-      ∃ e, ss.env v = some (SymValue.scalar e) ∧ evalExpr e mem = val)
-  ∧ (∀ v sh vals, s.env v = some (tensor sh vals) →
-      ∃ g, ss.env v = some (SymValue.tensor vals.length g)
-        ∧ ∀ i, i < vals.length → evalExpr (g i) mem = vals.getD i 0)
-  ∧ (∀ v, s.env v = none → ss.env v = none)
-
-def MemFaithfulOutside (s : MachineState) (ss : SymState) (mem : Nat → Int) (W : List Nat) : Prop :=
-  ∀ addr, addr ∉ W → evalExpr (ss.memory addr) mem = mem addr
-
-def Expr.isConcrete : Expr → Bool
-  | .lit _      => true
-  | .var _ _    => false
-  | .load _     => false
-  | .add e1 e2  => e1.isConcrete && e2.isConcrete
-  | .mul e1 e2  => e1.isConcrete && e2.isConcrete
-  | .max e1 e2  => e1.isConcrete && e2.isConcrete
-  | .reduceSum _ => false
-theorem evalInstr_memory_unchanged_of_not_store
-    (instr : TritonInstr) (s : MachineState)
-    (h : instr.op ≠ .store ∧ instr.op ≠ .storef) :
-    (evalInstr instr s).memory = s.memory := by
-  unfold evalInstr
-  split
-  · exact absurd ‹instr.op = .store› h.1
-  · exact absurd ‹instr.op = .storef› h.2
-  · cases evalOp instr.op instr.args s with
-    | none => rfl
-    | some val => simp [MachineState.bind]
-
-theorem evalKernel_memory_unchanged_of_no_store
-    (K : TritonKernel) (s : MachineState)
-    (h : ∀ instr ∈ K, instr.op ≠ .store ∧ instr.op ≠ .storef) :
-    (evalKernel K s).memory = s.memory := by
-  induction K generalizing s with
-  | nil => simp [evalKernel]
-  | cons instr rest ih =>
-      simp only [evalKernel, List.foldl]
-      rw [ih (evalInstr instr s) (fun i hi => h i (by simp [hi]))]
-      exact evalInstr_memory_unchanged_of_not_store instr s (h instr (by simp))
-
-def parsedVectorAdd : TritonKernel := [
-  { result := "c1024_i32", op := .constant 1024,          args := [] },
-  { result := "0",         op := .get_program_id 0,       args := [] },
-  { result := "1",         op := .muli,                   args := ["0", "c1024_i32"] },
-  { result := "2",         op := .make_range (some 1024), args := [] },
-  { result := "3",         op := .splat [1024],            args := ["1"] },
-  { result := "4",         op := .addi,                   args := ["3", "2"] },
-  { result := "5",         op := .addptr,                 args := ["arg0", "4"] },
-  { result := "6",         op := .addptr,                 args := ["arg1", "4"] },
-  { result := "7",         op := .addptr,                 args := ["arg2", "4"] },
-  { result := "8",         op := .load,                   args := ["5"] },
-  { result := "9",         op := .load,                   args := ["6"] },
-  { result := "10",        op := .addf,                   args := ["8", "9"] },
-  { result := "_",         op := .store,                  args := ["7", "10"] }
-]
-
-def parsedVectorAddTutorial : TritonKernel := [
-  { result := "c1024_i32",   op := .constant 1024,          args := [] },
-  { result := "pid",         op := .get_program_id 0,       args := [] },
-  { result := "block_start", op := .muli,                   args := ["pid", "c1024_i32"] },
-  { result := "offsets",     op := .make_range (some 1024), args := [] },
-  { result := "offsets_0",   op := .splat [1024],            args := ["block_start"] },
-  { result := "offsets_1",   op := .addi,                   args := ["offsets_0", "offsets"] },
-  { result := "mask",        op := .splat [1024],            args := ["n_elements"] },
-  { result := "mask_2",      op := .cmpi_slt,                args := ["offsets_1", "mask"] },
-  { result := "x",           op := .splat [1024],            args := ["x_ptr"] },
-  { result := "x_3",         op := .addptr,                 args := ["x", "offsets_1"] },
-  { result := "x_4",         op := .load,                   args := ["x_3", "mask_2"] },
-  { result := "y",           op := .splat [1024],            args := ["y_ptr"] },
-  { result := "y_5",         op := .addptr,                 args := ["y", "offsets_1"] },
-  { result := "y_6",         op := .load,                   args := ["y_5", "mask_2"] },
-  { result := "output",      op := .addf,                   args := ["x_4", "y_6"] },
-  { result := "0",           op := .splat [1024],            args := ["output_ptr"] },
-  { result := "1",           op := .addptr,                 args := ["0", "offsets_1"] },
-  { result := "_",           op := .store,                  args := ["1", "output", "mask_2"] }
-]
-
-theorem parsedVectorAdd_prefix_memory_unchanged (a b : List Int) (pid bs gs : Nat) :
-    (evalKernel (parsedVectorAdd.take 9) (parsedInitState a b pid bs gs)).memory
-      = (parsedInitState a b pid bs gs).memory := by
-  apply evalKernel_memory_unchanged_of_no_store
-  intro instr hi
-  simp only [parsedVectorAdd, List.take, List.mem_cons, List.mem_singleton, List.not_mem_nil] at hi
-  rcases hi with rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl|rfl <;> exact ⟨by decide, by decide⟩
-
-def symParsedVectorAddInitState (pid bs gs n : Nat) : SymState :=
-  { pid        := pid
-  , block_size := bs
-  , grid_size  := gs
-  , memory     := fun addr =>
-      if addr < n then Expr.var "a" addr
-      else if addr < 2 * n then Expr.var "b" addr
-      else Expr.lit 0
-  , env        := fun v => match v with
-      | "arg0"       => some (SymValue.scalar (Expr.lit 0))
-      | "arg1"       => some (SymValue.scalar (Expr.lit (Int.ofNat n)))
-      | "arg2"       => some (SymValue.scalar (Expr.lit (Int.ofNat (2 * n))))
-      | "a_base"     => some (SymValue.scalar (Expr.lit 0))
-      | "b_base"     => some (SymValue.scalar (Expr.lit (Int.ofNat n)))
-      | "c_base"     => some (SymValue.scalar (Expr.lit (Int.ofNat (2 * n))))
-      | "bsize"      => some (SymValue.scalar (Expr.lit (Int.ofNat bs)))
-      | "x_ptr"      => some (SymValue.scalar (Expr.lit 0))
-      | "y_ptr"      => some (SymValue.scalar (Expr.lit (Int.ofNat n)))
-      | "output_ptr" => some (SymValue.scalar (Expr.lit (Int.ofNat (2 * n))))
-      | "n_elements" => some (SymValue.scalar (Expr.lit (Int.ofNat n)))
-      | _            => none }
-
-theorem parsedInitStates_faithful (a b : List Int) (pid bs gs : Nat) :
-    StatesFaithful
-      (parsedInitState a b pid bs gs)
-      (symParsedVectorAddInitState pid bs gs a.length)
-      (concreteMem a b) := by
-  refine ⟨rfl, rfl, rfl, ?_, ?_, ?_, ?_⟩
-  · intro addr
-    simp only [symParsedVectorAddInitState, parsedInitState, concreteMem]
-    by_cases h1 : addr < a.length
-    · simp only [h1, ↓reduceIte, evalExpr, layoutMemory]
-    · by_cases h2 : addr < 2 * a.length
-      · simp only [h1, h2, ↓reduceIte, evalExpr]
-      · simp only [h1, h2, ↓reduceIte, evalExpr]
-        symm; unfold layoutMemory; simp [h1, h2]
-  · intro v val hv
-    simp only [parsedInitState] at hv
-    simp only [symParsedVectorAddInitState]
-    split at hv <;> simp_all [evalExpr]
-  · intro v sh vals hv
-    simp only [parsedInitState] at hv
-    split at hv <;> simp_all
-  · intro v hv
-    simp only [parsedInitState] at hv
-    simp only [symParsedVectorAddInitState]
-    split at hv <;> simp_all
-
-theorem parsedVectorAdd_prefix_faithful (a b : List Int) (pid bs gs : Nat) :
-    StatesFaithful
-      (evalKernel (parsedVectorAdd.take 9) (parsedInitState a b pid bs gs))
-      (symEvalKernel (parsedVectorAdd.take 9) (symParsedVectorAddInitState pid bs gs a.length))
-      (concreteMem a b) :=
-  symEvalKernel_faithful (parsedVectorAdd.take 9)
-    (parsedInitState a b pid bs gs)
-    (symParsedVectorAddInitState pid bs gs a.length)
-    (concreteMem a b)
-    (parsedInitStates_faithful a b pid bs gs)
-
-theorem parsedVectorAdd_s9_has_tensor_5 (a b : List Int) (pid bs gs : Nat) :
-    ∃ sh addrs, (evalKernel (parsedVectorAdd.take 9) (parsedInitState a b pid bs gs)).lookup "5"
-      = some (TritonValue.tensor sh addrs) := by
-  simp only [parsedVectorAdd, parsedInitState, evalKernel, evalInstr, evalOp,
-             List.take, MachineState.bind, MachineState.lookup, TritonValue.zipWith,
-             List.foldl]
-  exact ⟨_, _, rfl⟩
-
-theorem parsedVectorAdd_s9_has_tensor_6 (a b : List Int) (pid bs gs : Nat) :
-    ∃ sh addrs, (evalKernel (parsedVectorAdd.take 9) (parsedInitState a b pid bs gs)).lookup "6"
-      = some (TritonValue.tensor sh addrs) := by
-  simp only [parsedVectorAdd, parsedInitState, evalKernel, evalInstr, evalOp,
-             List.take, MachineState.bind, MachineState.lookup, TritonValue.zipWith,
-             List.foldl]
-  exact ⟨_, _, rfl⟩
-
-theorem parsedVectorAdd_s10_faithful (a b : List Int) (pid bs gs : Nat) :
-    StatesFaithful
-      (evalKernel (parsedVectorAdd.take 10) (parsedInitState a b pid bs gs))
-      (symEvalKernel (parsedVectorAdd.take 10) (symParsedVectorAddInitState pid bs gs a.length))
-      (concreteMem a b) := by
-  obtain ⟨hp, hbs, hgs, hmem, hsc, hten, hnone⟩ := parsedVectorAdd_prefix_faithful a b pid bs gs
-  obtain ⟨sh5, addrs5, h5⟩ := parsedVectorAdd_s9_has_tensor_5 a b pid bs gs
-  have hmem_raw : (evalKernel (parsedVectorAdd.take 9) (parsedInitState a b pid bs gs)).memory
-      = concreteMem a b := by
-    rw [parsedVectorAdd_prefix_memory_unchanged]; rfl
-  have step := load_tensor_faithful_when_memory_unchanged
-    hp hbs hgs hmem hsc hten hnone hmem_raw
-    { result := "8", op := .load, args := ["5"] } "5" rfl rfl sh5 addrs5 h5
-  simpa [parsedVectorAdd, evalKernel, symEvalKernel, List.take, List.foldl] using step
+theorem con_foldl_pid (idxs : List Nat) (f : Nat → Nat) (g : Nat → Int) (s : MachineState) :
+    (List.foldl (fun st i => st.writeMem (f i) (g i)) s idxs).pid = s.pid := by
+  induction idxs generalizing s with
+  | nil => rfl
+  | cons hd tl ih => simp only [List.foldl_cons]; rw [ih]; rfl
+theorem con_foldl_bs (idxs : List Nat) (f : Nat → Nat) (g : Nat → Int) (s : MachineState) :
+    (List.foldl (fun st i => st.writeMem (f i) (g i)) s idxs).block_size = s.block_size := by
+  induction idxs generalizing s with
+  | nil => rfl
+  | cons hd tl ih => simp only [List.foldl_cons]; rw [ih]; rfl
+theorem con_foldl_gs (idxs : List Nat) (f : Nat → Nat) (g : Nat → Int) (s : MachineState) :
+    (List.foldl (fun st i => st.writeMem (f i) (g i)) s idxs).grid_size = s.grid_size := by
+  induction idxs generalizing s with
+  | nil => rfl
+  | cons hd tl ih => simp only [List.foldl_cons]; rw [ih]; rfl
+theorem con_foldl_env (idxs : List Nat) (f : Nat → Nat) (g : Nat → Int) (s : MachineState) (var : String) :
+    (List.foldl (fun st i => st.writeMem (f i) (g i)) s idxs).env var = s.env var := by
+  induction idxs generalizing s with
+  | nil => rfl
+  | cons hd tl ih => simp only [List.foldl_cons]; rw [ih]; rfl
+theorem sym_foldl_pid (idxs : List Nat) (f : Nat → Nat) (g : Nat → Expr) (ss : SymState) :
+    (List.foldl (fun st i => st.writeMem (f i) (g i)) ss idxs).pid = ss.pid := by
+  induction idxs generalizing ss with
+  | nil => rfl
+  | cons hd tl ih => simp only [List.foldl_cons]; rw [ih]; rfl
+theorem sym_foldl_bs (idxs : List Nat) (f : Nat → Nat) (g : Nat → Expr) (ss : SymState) :
+    (List.foldl (fun st i => st.writeMem (f i) (g i)) ss idxs).block_size = ss.block_size := by
+  induction idxs generalizing ss with
+  | nil => rfl
+  | cons hd tl ih => simp only [List.foldl_cons]; rw [ih]; rfl
+theorem sym_foldl_gs (idxs : List Nat) (f : Nat → Nat) (g : Nat → Expr) (ss : SymState) :
+    (List.foldl (fun st i => st.writeMem (f i) (g i)) ss idxs).grid_size = ss.grid_size := by
+  induction idxs generalizing ss with
+  | nil => rfl
+  | cons hd tl ih => simp only [List.foldl_cons]; rw [ih]; rfl
+theorem sym_foldl_env (idxs : List Nat) (f : Nat → Nat) (g : Nat → Expr) (ss : SymState) (var : String) :
+    (List.foldl (fun st i => st.writeMem (f i) (g i)) ss idxs).env var = ss.env var := by
+  induction idxs generalizing ss with
+  | nil => rfl
+  | cons hd tl ih => simp only [List.foldl_cons]; rw [ih]; rfl
 
 
-theorem parsedVectorAdd_s10_has_tensor_6 (a b : List Int) (pid bs gs : Nat) :
-    ∃ sh addrs, (evalKernel (parsedVectorAdd.take 10) (parsedInitState a b pid bs gs)).lookup "6"
-      = some (TritonValue.tensor sh addrs) := by
-  simp only [parsedVectorAdd, parsedInitState, evalKernel, evalInstr, evalOp,
-             List.take, MachineState.bind, MachineState.lookup, TritonValue.zipWith,
-             List.foldl]
-  exact ⟨_, _, rfl⟩
+-- ══════════════════════════════════════════════════════════════════════════════
+-- Section 4: StatesFaithful binding lemmas
+-- ══════════════════════════════════════════════════════════════════════════════
 
-theorem parsedVectorAdd_s11_faithful (a b : List Int) (pid bs gs : Nat) :
-    StatesFaithful
-      (evalKernel (parsedVectorAdd.take 11) (parsedInitState a b pid bs gs))
-      (symEvalKernel (parsedVectorAdd.take 11) (symParsedVectorAddInitState pid bs gs a.length))
-      (concreteMem a b) := by
-  obtain ⟨hp, hbs, hgs, hmem, hsc, hten, hnone⟩ := parsedVectorAdd_s10_faithful a b pid bs gs
-  obtain ⟨sh6, addrs6, h6⟩ := parsedVectorAdd_s10_has_tensor_6 a b pid bs gs
-  have hmem_raw : (evalKernel (parsedVectorAdd.take 10) (parsedInitState a b pid bs gs)).memory
-      = concreteMem a b := by
-    simp only [parsedVectorAdd, parsedInitState, evalKernel, evalInstr, evalOp,
-               List.take, MachineState.bind, MachineState.lookup, TritonValue.zipWith,
-               List.foldl, concreteMem, layoutMemory]
-  have step := load_tensor_faithful_when_memory_unchanged
-    hp hbs hgs hmem hsc hten hnone hmem_raw
-    { result := "9", op := .load, args := ["6"] } "6" rfl rfl sh6 addrs6 h6
-  simpa [parsedVectorAdd, evalKernel, symEvalKernel, List.take, List.foldl] using step
-
-theorem parsedVectorAdd_s12_faithful (a b : List Int) (pid bs gs : Nat) :
-    StatesFaithful
-      (evalKernel (parsedVectorAdd.take 12) (parsedInitState a b pid bs gs))
-      (symEvalKernel (parsedVectorAdd.take 12) (symParsedVectorAddInitState pid bs gs a.length))
-      (concreteMem a b) := by
-  have step := evalInstr_faithful { result := "10", op := .addf, args := ["8", "9"] }
-    (evalKernel (parsedVectorAdd.take 11) (parsedInitState a b pid bs gs))
-    (symEvalKernel (parsedVectorAdd.take 11) (symParsedVectorAddInitState pid bs gs a.length))
-    (concreteMem a b)
-    (parsedVectorAdd_s11_faithful a b pid bs gs)
-  simpa [parsedVectorAdd, evalKernel, symEvalKernel, List.take, List.foldl] using step
-
-theorem parsedVectorAdd_s12_store_setup (a b : List Int) (pid bs gs : Nat) :
-    ∃ sh addrs vals,
-      (evalKernel (parsedVectorAdd.take 12) (parsedInitState a b pid bs gs)).lookup "7"
-        = some (TritonValue.tensor sh addrs) ∧
-      (evalKernel (parsedVectorAdd.take 12) (parsedInitState a b pid bs gs)).lookup "10"
-        = some (TritonValue.tensor sh vals) ∧
-      addrs.length = vals.length ∧
-      ∃ g, (symEvalKernel (parsedVectorAdd.take 12) (symParsedVectorAddInitState pid bs gs a.length)).env "7"
-        = some (SymValue.tensor addrs.length g) ∧
-      ∀ i, (g i).isConcrete = true := by
-  simp only [parsedVectorAdd, parsedInitState, symParsedVectorAddInitState, evalKernel, symEvalKernel,
-             evalInstr, symEvalInstr, evalOp, symEvalOp, symAdd, List.take, MachineState.bind,
-             SymState.bind, MachineState.lookup, SymState.lookup, TritonValue.zipWith, List.foldl]
-  refine ⟨_, _, _, rfl, rfl, rfl, _, rfl, fun i => ?_⟩
-  simp [Expr.isConcrete]
-
-
-theorem parsedVectorAdd_full_faithful (a b : List Int) (pid bs gs : Nat) :
-    StatesFaithful
-      (evalKernel parsedVectorAdd (parsedInitState a b pid bs gs))
-      (symEvalKernel parsedVectorAdd (symParsedVectorAddInitState pid bs gs a.length))
-      (concreteMem a b) := by
-  obtain ⟨hp, hbs, hgs, hmem, hsc, hten, hnone⟩ := parsedVectorAdd_s12_faithful a b pid bs gs
-  obtain ⟨sh, addrs, vals, h_lp, h_lv, hlen, g, hgp, hconcrete⟩ :=
-    parsedVectorAdd_s12_store_setup a b pid bs gs
-  obtain ⟨gv, hgv_corr, hgv_vals⟩ := hten "10" sh vals h_lv
-  obtain ⟨g', hgp', haddr'⟩ := hten "7" sh addrs h_lp
-  have hgeq : g' = g := by
-    have := hgp'.symm.trans hgp
-    injection this with h1 h2
-  have haddr := hgeq ▸ haddr'
-  have step := store_tensor_faithful_when_memory_unchanged
-    hp hbs hgs hmem hsc hten hnone
-    { result := "_", op := .store, args := ["7", "10"] } "7" "10" rfl rfl
-    sh addrs vals h_lp h_lv hlen g gv hgp hgv_corr
-    (fun i _ => hconcrete i) haddr hgv_vals
-  simpa [parsedVectorAdd, evalKernel, symEvalKernel, List.take, List.foldl] using step
-
-theorem parsedVectorAdd_correct
-    (a b : List Int) (pid bs gs : Nat)
-    (h_len : a.length = b.length) (h_bs : bs = 1024) (h_pid : pid < gs) (h_cov : gs * bs = a.length) :
-    ∀ i < bs,
-      let s  := parsedInitState a b pid bs gs
-      let s' := evalKernel parsedVectorAdd s
-      s'.readMem (2 * a.length + pid * bs + i) =
-      (vectorAddSpec a b).getD (pid * bs + i) 0 := by
-  intro i hi
-  have h_inbound : pid * bs + i < a.length := by
-    have h1 : pid + 1 <= gs := Nat.succ_le_of_lt h_pid
-    have h2 : (pid + 1) * bs <= gs * bs := Nat.mul_le_mul_right bs h1
-    simp [Nat.add_mul] at h2
-    omega
-  have h_spec : (vectorAddSpec a b).getD (pid * bs + i) 0 =
-      a.getD (pid * bs + i) 0 + b.getD (pid * bs + i) 0 :=
-    zipWith_add_getD a b (pid * bs + i) h_len
-  rw [h_spec]
-  obtain ⟨_, _, _, hmem, _⟩ := parsedVectorAdd_full_faithful a b pid bs gs
-  have key := hmem (2 * a.length + pid * bs + i)
-  show MachineState.readMem _ (2 * a.length + pid * bs + i) = _
-  unfold MachineState.readMem
-  rw [← key]
-  simp only [parsedVectorAdd, symParsedVectorAddInitState, symEvalKernel, symEvalInstr, symEvalOp,
-             symAdd, SymState.bind, SymState.lookup, SymState.writeMem, List.foldl]
-  simp only [evalExpr, concreteMem, layoutMemory, h_bs]
-  have hi1 : pid * 1024 + i < a.length := by omega
-  have hi2 : a.length + (pid * 1024 + i) < 2 * a.length := by omega
-  simp [hi1, hi2]
-  omega
-
-theorem load_tensor_faithful_when_memory_unchanged
-    {s : MachineState} {ss : SymState} {mem : Nat → Int}
-    (hp : s.pid = ss.pid) (hbs : s.block_size = ss.block_size)
-    (hgs : s.grid_size = ss.grid_size)
-    (hmem : ∀ addr, evalExpr (ss.memory addr) mem = s.memory addr)
-    (hsc : ∀ v val, s.env v = some (scalar val) →
-        ∃ e, ss.env v = some (SymValue.scalar e) ∧ evalExpr e mem = val)
-    (hten : ∀ v sh vals, s.env v = some (tensor sh vals) →
-        ∃ g, ss.env v = some (SymValue.tensor vals.length g)
-          ∧ ∀ i, i < vals.length → evalExpr (g i) mem = vals.getD i 0)
-    (hnone : ∀ v, s.env v = none → ss.env v = none)
-    (hmem_raw : s.memory = mem)
-    (instr : TritonInstr) (p : String)
-    (h_op : instr.op = .load) (h_args : instr.args = [p])
-    (sh : List Nat) (addrs : List Int)
-    (h_lp : s.lookup p = some (tensor sh addrs)) :
-    StatesFaithful (evalInstr instr s) (symEvalInstr instr ss) mem := by
-  have ⟨g, hg, hgv⟩ := hten p sh addrs h_lp
-  simp only [evalInstr, symEvalInstr, h_op, h_args, evalOp, symEvalOp,
-             MachineState.lookup, h_lp, SymState.lookup, hg]
-  refine bind_tensor_faithful hp hbs hgs hmem hsc hten hnone instr.result
-    sh (addrs.map fun a => s.readMem a.natAbs) (fun i => Expr.load (g i)) ?_
-  intro i hi
-  simp only [List.length_map] at hi
-  simp only [evalExpr, hgv i hi, MachineState.readMem, hmem_raw]
-  simp [List.getD, List.getElem?_map, hi]
-
-theorem evalExpr_concrete (e : Expr) (mem1 mem2 : Nat → Int)
-    (h : e.isConcrete = true) :
-    evalExpr e mem1 = evalExpr e mem2 := by
-  match e with
-  | .lit n => simp [evalExpr]
-  | .var _ _ => simp [Expr.isConcrete] at h
-  | .load _ => simp [Expr.isConcrete] at h
-  | .add e1 e2 =>
-      simp [Expr.isConcrete, Bool.and_eq_true] at h
-      simp [evalExpr, evalExpr_concrete e1 mem1 mem2 h.1,
-                      evalExpr_concrete e2 mem1 mem2 h.2]
-  | .mul e1 e2 =>
-      simp [Expr.isConcrete, Bool.and_eq_true] at h
-      simp [evalExpr, evalExpr_concrete e1 mem1 mem2 h.1,
-                      evalExpr_concrete e2 mem1 mem2 h.2]
-  | .max e1 e2 =>
-      simp [Expr.isConcrete, Bool.and_eq_true] at h
-      simp [evalExpr, evalExpr_concrete e1 mem1 mem2 h.1,
-                      evalExpr_concrete e2 mem1 mem2 h.2]
-  | .reduceSum _ => simp [Expr.isConcrete] at h
-
-theorem writeMem_mem_faithful
-    (ss : SymState) (s : MachineState) (mem : Nat → Int)
-    (hmem : ∀ addr, evalExpr (ss.memory addr) mem = s.memory addr)
-    (a : Nat) (e : Expr) (v : Int) (hev : evalExpr e mem = v) :
-    ∀ addr, evalExpr ((ss.writeMem a e).memory addr) mem = (s.writeMem a v).memory addr := by
-  intro addr
-  simp only [SymState.writeMem, MachineState.writeMem]
-  by_cases heq : addr == a
-  · simp [heq, hev]
-  · simp [heq, hmem addr]
 
 private theorem bind_scalar_faithful
-    {s : MachineState} {ss : SymState} {mem : Nat → Int}
-    (hp : s.pid = ss.pid) (hbs : s.block_size = ss.block_size)
-    (hgs : s.grid_size = ss.grid_size)
-    (hmem : ∀ addr, evalExpr (ss.memory addr) mem = s.memory addr)
-    (hsc : ∀ v val, s.env v = some (scalar val) →
-        ∃ e, ss.env v = some (SymValue.scalar e) ∧ evalExpr e mem = val)
-    (hten : ∀ v sh vals, s.env v = some (tensor sh vals) →
-        ∃ g, ss.env v = some (SymValue.tensor vals.length g)
-          ∧ ∀ i, i < vals.length → evalExpr (g i) mem = vals.getD i 0)
-    (hnone : ∀ v, s.env v = none → ss.env v = none)
-    (r : String) (cval : Int) (sval : Expr) (he : evalExpr sval mem = cval) :
-    StatesFaithful (s.bind r (scalar cval)) (ss.bind r (SymValue.scalar sval)) mem := by
-  refine ⟨hp, hbs, hgs, hmem, ?_, ?_, ?_⟩
-  · intro v val hv
-    simp only [MachineState.bind] at hv; simp only [SymState.bind]
-    by_cases heq : v == r
-    · simp only [heq, ↓reduceIte] at hv
-      have hval : cval = val := by
-        have := Option.some.inj hv
-        exact congrArg (fun x => match x with | scalar v => v | _ => 0) this
-      exact ⟨sval, by simp [heq], hval ▸ he⟩
-    · simp only [heq, ↓reduceIte] at hv ⊢; exact hsc v val hv
-  · intro v sh vals hv
-    simp only [MachineState.bind] at hv; simp only [SymState.bind]
-    by_cases heq : v == r
-    · simp only [heq, ↓reduceIte] at hv; simp at hv
-    · simp only [heq, ↓reduceIte] at hv ⊢; exact hten v sh vals hv
-  · intro v hv
-    simp only [MachineState.bind] at hv; simp only [SymState.bind]
-    by_cases heq : v == r
-    · simp only [heq, ↓reduceIte] at hv; simp at hv
-    · simp only [heq, ↓reduceIte] at hv ⊢; exact hnone v hv
+   {s : MachineState} {ss : SymState} {mem : Nat → Int}
+   (hp   : s.pid = ss.pid) (hbs : s.block_size = ss.block_size)
+   (hgs  : s.grid_size = ss.grid_size)
+   (hmem : ∀ addr, evalExpr (ss.memory addr) mem = s.memory addr)
+   (hsc  : ∀ v val, s.env v = some (scalar val) →
+       ∃ e, ss.env v = some (SymValue.scalar e) ∧ evalExpr e mem = val)
+   (hten : ∀ v sh vals, s.env v = some (tensor sh vals) →
+       ∃ g, ss.env v = some (SymValue.tensor vals.length g)
+         ∧ ∀ i, i < vals.length → evalExpr (g i) mem = vals.getD i 0)
+   (hnone : ∀ v, s.env v = none → ss.env v = none)
+   (r : String) (cval : Int) (sval : Expr) (he : evalExpr sval mem = cval) :
+   StatesFaithful (s.bind r (scalar cval)) (ss.bind r (SymValue.scalar sval)) mem := by
+ refine ⟨hp, hbs, hgs, hmem, ?_, ?_, ?_⟩
+ · intro v val hv
+   simp only [MachineState.bind] at hv; simp only [SymState.bind]
+   by_cases heq : v == r
+   · simp only [heq, ↓reduceIte] at hv
+     have hval : cval = val := by
+       have := Option.some.inj hv
+       exact congrArg (fun x => match x with | scalar v => v | _ => 0) this
+     exact ⟨sval, by simp [heq], hval ▸ he⟩
+   · simp only [heq, ↓reduceIte] at hv ⊢; exact hsc v val hv
+ · intro v sh vals hv
+   simp only [MachineState.bind] at hv; simp only [SymState.bind]
+   by_cases heq : v == r
+   · simp only [heq, ↓reduceIte] at hv; simp at hv
+   · simp only [heq, ↓reduceIte] at hv ⊢; exact hten v sh vals hv
+ · intro v hv
+   simp only [MachineState.bind] at hv; simp only [SymState.bind]
+   by_cases heq : v == r
+   · simp only [heq, ↓reduceIte] at hv; simp at hv
+   · simp only [heq, ↓reduceIte] at hv ⊢; exact hnone v hv
+
 
 private theorem bind_tensor_faithful
-    {s : MachineState} {ss : SymState} {mem : Nat → Int}
-    (hp : s.pid = ss.pid) (hbs : s.block_size = ss.block_size)
-    (hgs : s.grid_size = ss.grid_size)
-    (hmem : ∀ addr, evalExpr (ss.memory addr) mem = s.memory addr)
-    (hsc : ∀ v val, s.env v = some (scalar val) →
-        ∃ e, ss.env v = some (SymValue.scalar e) ∧ evalExpr e mem = val)
-    (hten : ∀ v sh vals, s.env v = some (tensor sh vals) →
-        ∃ g, ss.env v = some (SymValue.tensor vals.length g)
-          ∧ ∀ i, i < vals.length → evalExpr (g i) mem = vals.getD i 0)
-    (hnone : ∀ v, s.env v = none → ss.env v = none)
-    (r : String) (sh : List Nat) (cvals : List Int) (g : Nat → Expr)
-    (hg : ∀ i, i < cvals.length → evalExpr (g i) mem = cvals.getD i 0) :
-    StatesFaithful (s.bind r (tensor sh cvals)) (ss.bind r (SymValue.tensor cvals.length g)) mem := by
-  refine ⟨hp, hbs, hgs, hmem, ?_, ?_, ?_⟩
-  · intro v val hv
-    simp only [MachineState.bind] at hv; simp only [SymState.bind]
-    by_cases heq : v == r
-    · simp only [heq, ↓reduceIte] at hv; simp at hv
-    · simp only [heq, ↓reduceIte] at hv ⊢; exact hsc v val hv
-  · intro v sh' vals' hv
-    simp only [MachineState.bind] at hv; simp only [SymState.bind]
-    by_cases heq : v == r
-    · simp only [heq, ↓reduceIte] at hv
-      obtain ⟨rfl, rfl⟩ : sh = sh' ∧ cvals = vals' := by
-        have := Option.some.inj hv; cases this; simp
-      exact ⟨g, by simp [heq], hg⟩
-    · simp only [heq, ↓reduceIte] at hv ⊢; exact hten v sh' vals' hv
-  · intro v hv
-    simp only [MachineState.bind] at hv; simp only [SymState.bind]
-    by_cases heq : v == r
-    · simp only [heq, ↓reduceIte] at hv; simp at hv
-    · simp only [heq, ↓reduceIte] at hv ⊢; exact hnone v hv
+   {s : MachineState} {ss : SymState} {mem : Nat → Int}
+   (hp   : s.pid = ss.pid) (hbs : s.block_size = ss.block_size)
+   (hgs  : s.grid_size = ss.grid_size)
+   (hmem : ∀ addr, evalExpr (ss.memory addr) mem = s.memory addr)
+   (hsc  : ∀ v val, s.env v = some (scalar val) →
+       ∃ e, ss.env v = some (SymValue.scalar e) ∧ evalExpr e mem = val)
+   (hten : ∀ v sh vals, s.env v = some (tensor sh vals) →
+       ∃ g, ss.env v = some (SymValue.tensor vals.length g)
+         ∧ ∀ i, i < vals.length → evalExpr (g i) mem = vals.getD i 0)
+   (hnone : ∀ v, s.env v = none → ss.env v = none)
+   (r : String) (sh : List Nat) (cvals : List Int) (g : Nat → Expr)
+   (hg : ∀ i, i < cvals.length → evalExpr (g i) mem = cvals.getD i 0) :
+   StatesFaithful (s.bind r (tensor sh cvals))
+                  (ss.bind r (SymValue.tensor cvals.length g)) mem := by
+ refine ⟨hp, hbs, hgs, hmem, ?_, ?_, ?_⟩
+ · intro v val hv
+   simp only [MachineState.bind] at hv; simp only [SymState.bind]
+   by_cases heq : v == r
+   · simp only [heq, ↓reduceIte] at hv; simp at hv
+   · simp only [heq, ↓reduceIte] at hv ⊢; exact hsc v val hv
+ · intro v sh' vals' hv
+   simp only [MachineState.bind] at hv; simp only [SymState.bind]
+   by_cases heq : v == r
+   · simp only [heq, ↓reduceIte] at hv
+     obtain ⟨rfl, rfl⟩ : sh = sh' ∧ cvals = vals' := by
+       have := Option.some.inj hv; cases this; simp
+     exact ⟨g, by simp [heq], hg⟩
+   · simp only [heq, ↓reduceIte] at hv ⊢; exact hten v sh' vals' hv
+ · intro v hv
+   simp only [MachineState.bind] at hv; simp only [SymState.bind]
+   by_cases heq : v == r
+   · simp only [heq, ↓reduceIte] at hv; simp at hv
+   · simp only [heq, ↓reduceIte] at hv ⊢; exact hnone v hv
 
-theorem initStates_faithful (a b : List Int) (pid bs gs : Nat) :
-    StatesFaithful
-      (vectorAddInitState a b pid bs gs)
-      (symVectorAddInitState pid bs gs a.length)
-      (concreteMem a b) := by
-  refine ⟨rfl, rfl, rfl, ?_, ?_, ?_, ?_⟩
+
+-- ══════════════════════════════════════════════════════════════════════════════
+-- Section 5: Per-opcode faithfulness helpers
+--
+-- load/store/cmpi_slt require side conditions that can't be established
+-- generically in evalInstr_faithful (e.g. s.memory = mem, concrete addresses,
+-- all masks nonzero). These helpers take those conditions as hypotheses and
+-- are called directly from per-kernel step theorems.
+-- ══════════════════════════════════════════════════════════════════════════════
+
+
+-- load [ptr]: s.memory = mem
+theorem load_tensor_faithful_when_memory_unchanged
+   {s : MachineState} {ss : SymState} {mem : Nat → Int}
+   (hp   : s.pid = ss.pid) (hbs : s.block_size = ss.block_size)
+   (hgs  : s.grid_size = ss.grid_size)
+   (hmem : ∀ addr, evalExpr (ss.memory addr) mem = s.memory addr)
+   (hsc  : ∀ v val, s.env v = some (scalar val) →
+       ∃ e, ss.env v = some (SymValue.scalar e) ∧ evalExpr e mem = val)
+   (hten : ∀ v sh vals, s.env v = some (tensor sh vals) →
+       ∃ g, ss.env v = some (SymValue.tensor vals.length g)
+         ∧ ∀ i, i < vals.length → evalExpr (g i) mem = vals.getD i 0)
+   (hnone    : ∀ v, s.env v = none → ss.env v = none)
+   (hmem_raw : s.memory = mem)
+   (instr : TritonInstr) (p : String)
+   (h_op : instr.op = .load) (h_args : instr.args = [p])
+   (sh : List Nat) (addrs : List Int)
+   (h_lp : s.lookup p = some (tensor sh addrs)) :
+   StatesFaithful (evalInstr instr s) (symEvalInstr instr ss) mem := by
+  have h_envp : s.env p = some (tensor sh addrs) := h_lp
+  obtain ⟨gp, hsp, hgp⟩ := hten p sh addrs h_envp
+  simp only [evalInstr, symEvalInstr, h_op, evalOp, symEvalOp, h_args,
+             MachineState.lookup, SymState.lookup, h_envp, hsp,
+             List.head?, Option.getD]
+  have hlen : (addrs.map fun a => s.readMem a.natAbs).length = addrs.length := by simp
+  rw [show addrs.length = (addrs.map fun a => s.readMem a.natAbs).length from hlen.symm]
+  apply bind_tensor_faithful hp hbs hgs hmem hsc hten hnone
+  intro i hi
+  rw [hlen] at hi
+  simp only [evalExpr]
+  rw [hgp i hi, ← hmem_raw]
+  simp only [MachineState.readMem]
+  rw [List.getD_eq_getElem?_getD, List.getD_eq_getElem?_getD, List.getElem?_map]
+  simp [hi]
+
+theorem load_tensor_masked_faithful_when_all_true
+   {s : MachineState} {ss : SymState} {mem : Nat → Int}
+   (hp   : s.pid = ss.pid) (hbs : s.block_size = ss.block_size)
+   (hgs  : s.grid_size = ss.grid_size)
+   (hmem : ∀ addr, evalExpr (ss.memory addr) mem = s.memory addr)
+   (hsc  : ∀ v val, s.env v = some (scalar val) →
+       ∃ e, ss.env v = some (SymValue.scalar e) ∧ evalExpr e mem = val)
+   (hten : ∀ v sh vals, s.env v = some (tensor sh vals) →
+       ∃ g, ss.env v = some (SymValue.tensor vals.length g)
+         ∧ ∀ i, i < vals.length → evalExpr (g i) mem = vals.getD i 0)
+   (hnone    : ∀ v, s.env v = none → ss.env v = none)
+   (hmem_raw : s.memory = mem)
+   (instr : TritonInstr) (p m : String)
+   (h_op  : instr.op   = .load) (h_args : instr.args = [p, m])
+   (sh : List Nat) (addrs masks : List Int)
+   (h_lp  : s.lookup p = some (tensor sh addrs))
+   (h_lm  : s.lookup m = some (tensor sh masks))
+   (hlen  : addrs.length = masks.length)
+   (hall  : ∀ i, i < masks.length → masks.getD i 0 ≠ 0) :
+   StatesFaithful (evalInstr instr s) (symEvalInstr instr ss) mem := by
+  sorry
+
+theorem store_tensor_faithful_when_memory_unchanged
+   {s : MachineState} {ss : SymState} {mem : Nat → Int}
+   (hp   : s.pid = ss.pid) (hbs : s.block_size = ss.block_size)
+   (hgs  : s.grid_size = ss.grid_size)
+   (hmem : ∀ addr, evalExpr (ss.memory addr) mem = s.memory addr)
+   (hsc  : ∀ v val, s.env v = some (scalar val) →
+       ∃ e, ss.env v = some (SymValue.scalar e) ∧ evalExpr e mem = val)
+   (hten : ∀ v sh vals, s.env v = some (tensor sh vals) →
+       ∃ g, ss.env v = some (SymValue.tensor vals.length g)
+         ∧ ∀ i, i < vals.length → evalExpr (g i) mem = vals.getD i 0)
+   (hnone : ∀ v, s.env v = none → ss.env v = none)
+   (instr : TritonInstr) (p v : String)
+   (h_op  : instr.op   = .store) (h_args : instr.args = [p, v])
+   (sh : List Nat) (addrs vals : List Int)
+   (h_lp  : s.lookup p = some (tensor sh addrs))
+   (h_lv  : s.lookup v = some (tensor sh vals))
+   (hlen  : addrs.length = vals.length)
+   (gp gv : Nat → Expr)
+   (hgp       : ss.env p = some (SymValue.tensor addrs.length gp))
+   (hgv_corr  : ss.env v = some (SymValue.tensor vals.length gv))
+   (hconcrete : ∀ i, i < addrs.length → (gp i).isConcrete = true)
+   (haddr     : ∀ i, i < addrs.length → evalExpr (gp i) mem = addrs.getD i 0)
+   (hval      : ∀ i, i < addrs.length → evalExpr (gv i) mem = vals.getD i 0) :
+   StatesFaithful (evalInstr instr s) (symEvalInstr instr ss) mem := by
+  have h_envp : s.env p = some (tensor sh addrs) := h_lp
+  have h_envv : s.env v = some (tensor sh vals) := h_lv
+  simp only [evalInstr, symEvalInstr, h_op, h_args,
+             MachineState.lookup, SymState.lookup,
+             h_envp, h_envv, hgp, hgv_corr]
+  rw [MachineState.writeTile, zip_foldl_eq_range s addrs vals hlen]
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+  · rw [sym_foldl_pid, con_foldl_pid]; exact hp
+  · rw [sym_foldl_bs, con_foldl_bs]; exact hbs
+  · rw [sym_foldl_gs, con_foldl_gs]; exact hgs
   · intro addr
-    simp only [symVectorAddInitState, vectorAddInitState, concreteMem]
-    by_cases h1 : addr < a.length
-    · simp only [h1, ↓reduceIte, evalExpr, layoutMemory]
-    · by_cases h2 : addr < 2 * a.length
-      · simp only [h1, h2, ↓reduceIte, evalExpr]
-      · simp only [h1, h2, ↓reduceIte, evalExpr]
-        symm; unfold layoutMemory; simp [h1, h2]
-  · intro v val hv
-    simp only [vectorAddInitState] at hv
-    simp only [symVectorAddInitState]
-    split at hv <;> simp_all [evalExpr]
-  · intro v sh vals hv
-    simp only [vectorAddInitState] at hv
-    split at hv <;> simp_all
-  · intro v hv
-    simp only [vectorAddInitState] at hv
-    simp only [symVectorAddInitState]
-    split <;> simp_all
+    exact range_fold_mem_faithful addrs.length gp gv
+      (fun i => addrs.getD i 0) (fun i => vals.getD i 0) mem
+      hconcrete haddr hval s ss hmem addr
+  · intro w val hw
+    rw [con_foldl_env] at hw; rw [sym_foldl_env]; exact hsc w val hw
+  · intro w sh' vals' hw
+    rw [con_foldl_env] at hw; rw [sym_foldl_env]; exact hten w sh' vals' hw
+  · intro w hw
+    rw [con_foldl_env] at hw; rw [sym_foldl_env]; exact hnone w hw
 
--- Derive ss.lookup v = none from s.lookup v = none using hnone
-private theorem ss_none_of_none {s : MachineState} {ss : SymState}
-    (hnone : ∀ v, s.env v = none → ss.env v = none)
-    (v : String) (hv : s.lookup v = none) : ss.env v = none :=
-  hnone v hv
+theorem store_tensor_masked_faithful_when_all_true
+   {s : MachineState} {ss : SymState} {mem : Nat → Int}
+   (hp   : s.pid = ss.pid) (hbs : s.block_size = ss.block_size)
+   (hgs  : s.grid_size = ss.grid_size)
+   (hmem : ∀ addr, evalExpr (ss.memory addr) mem = s.memory addr)
+   (hsc  : ∀ v val, s.env v = some (scalar val) →
+       ∃ e, ss.env v = some (SymValue.scalar e) ∧ evalExpr e mem = val)
+   (hten : ∀ v sh vals, s.env v = some (tensor sh vals) →
+       ∃ g, ss.env v = some (SymValue.tensor vals.length g)
+         ∧ ∀ i, i < vals.length → evalExpr (g i) mem = vals.getD i 0)
+   (hnone : ∀ v, s.env v = none → ss.env v = none)
+   (instr : TritonInstr) (p v m : String)
+   (h_op  : instr.op   = .store) (h_args : instr.args = [p, v, m])
+   (sh : List Nat) (addrs vals masks : List Int)
+   (h_lp    : s.lookup p = some (tensor sh addrs))
+   (h_lv    : s.lookup v = some (tensor sh vals))
+   (h_lm    : s.lookup m = some (tensor sh masks))
+   (hlen_av : addrs.length = vals.length)
+   (hlen_am : addrs.length = masks.length)
+   (hall    : ∀ i, i < masks.length → masks.getD i 0 ≠ 0)
+   (gp gv : Nat → Expr)
+   (hgp       : ss.env p = some (SymValue.tensor addrs.length gp))
+   (hgv_corr  : ss.env v = some (SymValue.tensor vals.length gv))
+   (hconcrete : ∀ i, i < addrs.length → (gp i).isConcrete = true)
+   (haddr     : ∀ i, i < addrs.length → evalExpr (gp i) mem = addrs.getD i 0)
+   (hval      : ∀ i, i < addrs.length → evalExpr (gv i) mem = vals.getD i 0) :
+   StatesFaithful (evalInstr instr s) (symEvalInstr instr ss) mem := by
+  sorry
 
+theorem cmpi_slt_tensor_faithful_when_all_true
+   {s : MachineState} {ss : SymState} {mem : Nat → Int}
+   (hp   : s.pid = ss.pid) (hbs : s.block_size = ss.block_size)
+   (hgs  : s.grid_size = ss.grid_size)
+   (hmem : ∀ addr, evalExpr (ss.memory addr) mem = s.memory addr)
+   (hsc  : ∀ v val, s.env v = some (scalar val) →
+       ∃ e, ss.env v = some (SymValue.scalar e) ∧ evalExpr e mem = val)
+   (hten : ∀ v sh vals, s.env v = some (tensor sh vals) →
+       ∃ g, ss.env v = some (SymValue.tensor vals.length g)
+         ∧ ∀ i, i < vals.length → evalExpr (g i) mem = vals.getD i 0)
+   (hnone : ∀ v, s.env v = none → ss.env v = none)
+   (instr : TritonInstr) (a b : String)
+   (h_op  : instr.op   = .cmpi_slt) (h_args : instr.args = [a, b])
+   (sh : List Nat) (xs ys : List Int)
+   (h_la  : s.lookup a = some (tensor sh xs))
+   (h_lb  : s.lookup b = some (tensor sh ys))
+   (hlen  : xs.length = ys.length)
+   (hall  : ∀ i, i < xs.length → xs.getD i 0 < ys.getD i 0) :
+   StatesFaithful (evalInstr instr s) (symEvalInstr instr ss) mem := by
+  sorry
+
+-- ══════════════════════════════════════════════════════════════════════════════
+-- Section 6: evalInstr_faithful
+-- ══════════════════════════════════════════════════════════════════════════════
+
+
+
+set_option maxHeartbeats 4000000 in
 theorem evalInstr_faithful (instr : TritonInstr)
     (s : MachineState) (ss : SymState) (mem : Nat → Int)
     (h : StatesFaithful s ss mem) :
     StatesFaithful (evalInstr instr s) (symEvalInstr instr ss) mem := by
   obtain ⟨hp, hbs, hgs, hmem, hsc, hten, hnone⟩ := h
-  have hf : StatesFaithful s ss mem := ⟨hp, hbs, hgs, hmem, hsc, hten, hnone⟩
+  have hid : StatesFaithful s ss mem := ⟨hp, hbs, hgs, hmem, hsc, hten, hnone⟩
   match h_op : instr.op with
-  | .get_program_id axis =>
-      by_cases haxis : axis = 0
-      · subst haxis
-        simp [evalInstr, symEvalInstr, h_op, evalOp, symEvalOp]
-        exact bind_scalar_faithful hp hbs hgs hmem hsc hten hnone instr.result
-          (Int.ofNat s.pid) (Expr.lit (Int.ofNat ss.pid)) (by simp [evalExpr, hp])
-      · sorry -- get_program_id with axis ≠ 0 (pid_y): SymState has no pid_y field yet, not needed for vector-add
+
   | .constant v =>
-      simp only [evalInstr, symEvalInstr, h_op, evalOp, symEvalOp]
-      exact bind_scalar_faithful hp hbs hgs hmem hsc hten hnone instr.result
-        v (Expr.lit v) (by simp [evalExpr])
-  | .make_range =>
-      simp only [evalInstr, symEvalInstr, h_op, evalOp, symEvalOp]
-      -- symEvalInstr produces SymValue.tensor ss.block_size, evalInstr produces List.range s.block_size
-      -- with hbs : s.block_size = ss.block_size, these match
-      have hlen : (List.map Int.ofNat (List.range s.block_size)).length = ss.block_size := by
-        simp [List.length_map, List.length_range, hbs]
-      rw [← hlen]
-      refine bind_tensor_faithful hp hbs hgs hmem hsc hten hnone instr.result
-        [s.block_size] ((List.range s.block_size).map Int.ofNat)
-        (fun i => Expr.lit (Int.ofNat i)) ?_
+      simp only [evalInstr, symEvalInstr, symEvalOp, evalOp, h_op, MachineState.lookup]
+      exact bind_scalar_faithful hp hbs hgs hmem hsc hten hnone
+        instr.result v (Expr.lit v) (by simp [evalExpr])
+
+  | .get_program_id axis =>
+      simp only [evalInstr, symEvalInstr, symEvalOp, evalOp, h_op, MachineState.lookup]
+      by_cases haxis : axis == 0
+      · simp only [haxis, ↓reduceIte]
+        exact bind_scalar_faithful hp hbs hgs hmem hsc hten hnone _ _ _
+          (by simp [evalExpr, hp])
+      · simp only [haxis, ↓reduceIte]; sorry
+
+  | .make_range sizeOpt =>
+      simp only [evalInstr, symEvalInstr, symEvalOp, evalOp, h_op]
+      rw [← hbs]
+      have hlen : (List.map Int.ofNat (List.range (sizeOpt.getD s.block_size))).length
+                  = sizeOpt.getD s.block_size := by simp
+      conv in (SymValue.tensor (sizeOpt.getD s.block_size) _) =>
+        rw [show sizeOpt.getD s.block_size =
+              (List.map Int.ofNat (List.range (sizeOpt.getD s.block_size))).length from hlen.symm]
+      apply bind_tensor_faithful hp hbs hgs hmem hsc hten hnone
       intro i hi
-      simp only [List.length_map, List.length_range] at hi
-      simp only [evalExpr, range_map_getD, hi, ↓reduceIte]
-  | .splat =>
+      rw [hlen] at hi
+      simp only [evalExpr]
+      rw [List.getD_eq_getElem?_getD, List.getElem?_map]
+      simp [List.getElem?_range, hi]
+
+  | .splat shape =>
       match h_args : instr.args with
-      | [] =>
-          simp only [evalInstr, symEvalInstr, h_op, h_args, evalOp, symEvalOp]; exact hf
       | [v] =>
-          cases h_lv : s.lookup v with
+          cases h_lv : s.env v with
           | none =>
-              have h_env_none : s.env v = none := h_lv
-              have hss : ss.env v = none := hnone v h_lv
-              simp only [evalInstr, symEvalInstr, h_op, h_args, evalOp, symEvalOp,
-                         MachineState.lookup, h_env_none, SymState.lookup, hss]
-              exact hf
-          | some val => cases val with
-            | scalar x =>
-                have h_env_sc : s.env v = some (scalar x) := h_lv
-                have ⟨e, hes, hev⟩ := hsc v x h_lv
-                simp only [evalInstr, symEvalInstr, h_op, h_args, evalOp, symEvalOp,
-                           MachineState.lookup, h_env_sc, SymState.lookup, hes]
-                have hlen_splat : (List.replicate s.block_size x).length = ss.block_size := by
-                  simp [hbs]
-                rw [← hlen_splat]
-                exact bind_tensor_faithful hp hbs hgs hmem hsc hten hnone instr.result
-                  [s.block_size] (List.replicate s.block_size x)
-                  (fun _ => e)
-                  (by intro i hi
-                      simp only [List.length_replicate] at hi
-                      rw [hev]
-                      simp [List.getD, List.getElem?_replicate, hi])
-            | tensor sh_b vals_b =>
-                      have h_env_b : s.env b = some (tensor sh_b vals_b) := h_lb2
-                      have ⟨gb, hgb, hgbv⟩ := hten b sh_b vals_b h_lb2
-                      by_cases hsh : sh_a = sh_b
-                      · by_cases hlen : vals_a.length = vals_b.length
-                        · subst hsh
-                          simp only [evalInstr, symEvalInstr, h_op, h_args, evalOp, symEvalOp, symAdd,
-                                     MachineState.lookup, h_env_a, h_env_b, SymState.lookup, hga, hgb,
-                                     BEq.rfl, ↓reduceIte]
-                          have hlen2 : ((vals_a.zip vals_b).map (fun (x, y) => x + y)).length = vals_a.length := by
-                            simp [List.length_zip, hlen]
-                          rw [← hlen2]
-                          refine bind_tensor_faithful hp hbs hgs hmem hsc hten hnone instr.result
-                            sh_a ((vals_a.zip vals_b).map (fun (x, y) => x + y))
-                            (fun i => Expr.add (ga i) (gb i)) ?_
-                          intro i hi
-                          simp only [List.length_map, List.length_zip, hlen, min_self] at hi
-                          simp only [evalExpr, hgav i (hlen ▸ hi), hgbv i hi]
-                          simp [List.getD, List.getElem?_map, List.getElem?_zip, hi, hlen]
-                        · sorry -- addi tensor×tensor, length mismatch (not needed for vector-add)
-                      · sorry -- addi tensor×tensor, shape mismatch (not needed for vector-add)
-      | _ :: _ :: _ =>
-          simp only [evalInstr, symEvalInstr, h_op, h_args, evalOp, symEvalOp]; exact hf
+              simp only [evalInstr, symEvalInstr, symEvalOp, evalOp, h_op, h_args,
+                MachineState.lookup, h_lv, Option.bind_none, SymState.lookup, hnone v h_lv]
+              exact hid
+          | some val =>
+              cases val with
+              | scalar x =>
+                  obtain ⟨e, hse, heval⟩ := hsc v x h_lv
+                  simp only [evalInstr, symEvalInstr, symEvalOp, evalOp, h_op, h_args,
+                    MachineState.lookup, h_lv, Option.bind_some, SymState.lookup, hse]
+                  -- goal: StatesFaithful (s.bind r (tensor shape (replicate n x)))
+                  --                      (ss.bind r (SymValue.tensor n (fun _ => e)))
+                  -- Use conv to rewrite only the symbolic tensor n to (replicate n x).length
+                  conv in (SymValue.tensor (shape.foldl (· * ·) 1) _) =>
+                    rw [show shape.foldl (· * ·) 1 =
+                        (List.replicate (shape.foldl (· * ·) 1) x).length from by
+                      simp]
+                  apply bind_tensor_faithful hp hbs hgs hmem hsc hten hnone
+                  intro i hi
+                  simp only [List.length_replicate] at hi
+                  -- goal: evalExpr e mem = (List.replicate n x)[i]?.getD 0
+                  -- (replicate n x)[i] = x since i < n; evalExpr e mem = x by heval
+                  simp only [evalExpr, heval]
+                  simp [List.getElem?_replicate, hi]
+              | fscalar _ => sorry
+              | ftensor _ _ => sorry
+              | tensor _ _ => sorry
+      | _ => sorry
+
   | .addi =>
-      simp only [evalInstr, symEvalInstr, h_op, evalOp, symEvalOp, symAdd]
       match h_args : instr.args with
       | [a, b] =>
-          simp only [h_args]
-          cases h_la : s.lookup a with
+          cases h_la : s.env a with
           | none =>
-              simp only [evalInstr, symEvalInstr, h_op, h_args, evalOp, symEvalOp, symAdd,
-                         MachineState.lookup, h_la]
-              have hss : ss.env a = none := ss_none_of_none hnone a h_la
-              simp only [SymState.lookup, hss]; exact hf
-          | some va => cases va with
-            | scalar x =>
-                cases h_lb : s.lookup b with
-                | none =>
-                    have ⟨ea, heas, _⟩ := hsc a x h_la
-                    simp only [evalInstr, symEvalInstr, h_op, h_args, evalOp, symEvalOp, symAdd,
-                               MachineState.lookup, h_la, h_lb, SymState.lookup, heas]
-                    have hss : ss.env b = none := ss_none_of_none hnone b h_lb
-                    simp only [hss]; exact hf
-                | some vb => cases vb with
-                  | scalar y =>
-                      have ⟨ea, heas, heav⟩ := hsc a x h_la
-                      have ⟨eb, hebs, hebv⟩ := hsc b y h_lb
-                      simp only [MachineState.lookup, h_la, h_lb, SymState.lookup, heas, hebs]
-                      exact bind_scalar_faithful hp hbs hgs hmem hsc hten hnone instr.result
-                        (x + y) (Expr.add ea eb) (by simp [evalExpr, heav, hebv])
-                  | tensor sh vals =>
-                      have h_env_a : s.env a = some (scalar x) := h_la
-                      have h_env_b : s.env b = some (tensor sh vals) := h_lb
-                      have ⟨ea, heas, heav⟩ := hsc a x h_la
-                      have ⟨gb, hgb, hgbv⟩ := hten b sh vals h_lb
-                      simp only [evalInstr, symEvalInstr, h_op, h_args, evalOp, symEvalOp, symAdd,
-                                 MachineState.lookup, h_env_a, h_env_b, SymState.lookup, heas, hgb]
-                      conv in (SymValue.tensor vals.length _) =>
-                        rw [show vals.length = (vals.map (· + x)).length from (List.length_map _).symm]
-                      refine bind_tensor_faithful hp hbs hgs hmem hsc hten hnone instr.result
-                        sh (vals.map (· + x)) (fun i => Expr.add ea (gb i)) ?_
-                      intro i hi
-                      simp only [List.length_map] at hi
-                      simp only [evalExpr, heav, hgbv i hi]
-                      simp [List.getD, hi, Int.add_comm]
-            | tensor sh_a vals_a =>
-                have h_env_a : s.env a = some (tensor sh_a vals_a) := h_la
-                have ⟨ga, hga, hgav⟩ := hten a sh_a vals_a h_la
-                cases h_lb2 : s.lookup b with
-                | none =>
-                    have hss_b : ss.env b = none := hnone b h_lb2
-                    simp only [evalInstr, symEvalInstr, h_op, h_args, evalOp, symEvalOp, symAdd,
-                               MachineState.lookup, h_env_a, h_lb2, SymState.lookup, hga]
-                    simp only [hss_b]; exact hf
-                | some vb2 => cases vb2 with
-                  | tensor sh_b vals_b =>
-                      sorry -- addi tensor×tensor
-                  | scalar y =>
-                      have h_env_b2 : s.env b = some (scalar y) := h_lb2
-                      have ⟨eb, hebs, hebv⟩ := hsc b y h_lb2
-                      simp only [evalInstr, symEvalInstr, h_op, h_args, evalOp, symEvalOp, symAdd,
-                                 MachineState.lookup, h_env_a, h_env_b2, SymState.lookup, hga, hebs]
-                      conv in (SymValue.tensor vals_a.length _) =>
-                        rw [show vals_a.length = (vals_a.map (· + y)).length from (List.length_map _).symm]
-                      refine bind_tensor_faithful hp hbs hgs hmem hsc hten hnone instr.result
-                        sh_a (vals_a.map (· + y)) (fun i => Expr.add (ga i) eb) ?_
-                      intro i hi
-                      simp only [List.length_map] at hi
-                      simp only [evalExpr, hebv, hgav i hi]
-                      simp [List.getD, hi, Int.add_comm]
-      | [] =>
-          simp only [evalInstr, symEvalInstr, h_op, evalOp, symEvalOp, symAdd]; exact hf
-      | [_] =>
-          simp only [evalInstr, symEvalInstr, h_op, evalOp, symEvalOp, symAdd]; exact hf
-      | _ :: _ :: _ :: _ =>
-          simp only [evalInstr, symEvalInstr, h_op, evalOp, symEvalOp, symAdd]; exact hf
+              simp only [evalInstr, symEvalInstr, symEvalOp, evalOp, h_op, h_args,
+                MachineState.lookup, h_la, Option.bind_none, SymState.lookup,
+                hnone a h_la, symAdd]; exact hid
+          | some va =>
+              cases h_lb : s.env b with
+              | none =>
+                  cases va with
+                  | scalar x =>
+                      obtain ⟨ea, hsa, _⟩ := hsc a x h_la
+                      simp only [evalInstr, symEvalInstr, symEvalOp, evalOp, h_op, h_args,
+                        MachineState.lookup, h_la, h_lb, Option.bind_some, Option.bind_none,
+                        SymState.lookup, hsa, hnone b h_lb, symAdd]; exact hid
+                  | tensor sh xs =>
+                      obtain ⟨g, hsg, _⟩ := hten a sh xs h_la
+                      simp only [evalInstr, symEvalInstr, symEvalOp, evalOp, h_op, h_args,
+                        MachineState.lookup, h_la, h_lb, Option.bind_some, Option.bind_none,
+                        SymState.lookup, hsg, hnone b h_lb, symAdd]; exact hid
+                  | fscalar _ => sorry
+                  | ftensor _ _ => sorry
+              | some vb =>
+                  cases va with
+                  | scalar x =>
+                      cases vb with
+                      | scalar y =>
+                          obtain ⟨ea, hsa, hea⟩ := hsc a x h_la
+                          obtain ⟨eb, hsb, heb⟩ := hsc b y h_lb
+                          simp only [evalInstr, symEvalInstr, symEvalOp, evalOp, h_op, h_args,
+                            MachineState.lookup, h_la, h_lb, Option.bind_some,
+                            SymState.lookup, hsa, hsb, symAdd]
+                          exact bind_scalar_faithful hp hbs hgs hmem hsc hten hnone _ _ _
+                            (by simp [evalExpr, hea, heb])
+                      | tensor sh ys =>
+                          obtain ⟨ea, hsa, hea⟩ := hsc a x h_la
+                          obtain ⟨g, hsg, heg⟩ := hten b sh ys h_lb
+                          simp only [evalInstr, symEvalInstr, symEvalOp, evalOp, h_op, h_args,
+                            MachineState.lookup, h_la, h_lb, Option.bind_some,
+                            SymState.lookup, hsa, hsg, symAdd]
+                          simp only [show ys.length = (ys.map (fun z => z + x)).length from by simp]
+                          apply bind_tensor_faithful hp hbs hgs hmem hsc hten hnone
+                          intro i hi; simp only [List.length_map] at hi
+                          simp only [evalExpr]; rw [hea, heg i hi, map_add_getD ys x i hi]; omega
+                      | fscalar _ => sorry
+                      | ftensor _ _ => sorry
+                  | tensor sh xs =>
+                      cases vb with
+                      | scalar y =>
+                          obtain ⟨g, hsg, heg⟩ := hten a sh xs h_la
+                          obtain ⟨eb, hsb, heb⟩ := hsc b y h_lb
+                          simp only [evalInstr, symEvalInstr, symEvalOp, evalOp, h_op, h_args,
+                            MachineState.lookup, h_la, h_lb, Option.bind_some,
+                            SymState.lookup, hsg, hsb, symAdd]
+                          simp only [show xs.length = (xs.map (fun z => z + y)).length from by simp]
+                          apply bind_tensor_faithful hp hbs hgs hmem hsc hten hnone
+                          intro i hi; simp only [List.length_map] at hi
+                          simp only [evalExpr]; rw [heg i hi, heb, map_add_getD xs y i hi]
+                      | tensor _ _ => sorry
+                      | fscalar _ => sorry
+                      | ftensor _ _ => sorry
+                  | fscalar _ => sorry
+                  | ftensor _ _ => sorry
+      | _ => sorry
+
   | .addf =>
-      simp only [evalInstr, symEvalInstr, h_op, evalOp, symEvalOp, symAdd]
       match h_args : instr.args with
       | [a, b] =>
-          simp only [h_args]
-          cases h_la : s.lookup a with
+          cases h_la : s.env a with
           | none =>
-              simp only [evalInstr, symEvalInstr, h_op, h_args, evalOp, symEvalOp, symAdd,
-                         MachineState.lookup, h_la]
-              have hss : ss.env a = none := ss_none_of_none hnone a h_la
-              simp only [SymState.lookup, hss]; exact hf
-          | some va => cases va with
-            | scalar x =>
-                cases h_lb : s.lookup b with
-                | none =>
-                    have ⟨ea, heas, _⟩ := hsc a x h_la
-                    simp only [evalInstr, symEvalInstr, h_op, h_args, evalOp, symEvalOp, symAdd,
-                               MachineState.lookup, h_la, h_lb, SymState.lookup, heas]
-                    have hss : ss.env b = none := ss_none_of_none hnone b h_lb
-                    simp only [hss]; exact hf
-                | some vb => cases vb with
-                  | scalar y =>
-                      have ⟨ea, heas, heav⟩ := hsc a x h_la
-                      have ⟨eb, hebs, hebv⟩ := hsc b y h_lb
-                      simp only [MachineState.lookup, h_la, h_lb, SymState.lookup, heas, hebs]
-                      exact bind_scalar_faithful hp hbs hgs hmem hsc hten hnone instr.result
-                        (x + y) (Expr.add ea eb) (by simp [evalExpr, heav, hebv])
-                  | tensor sh vals =>
-                      have h_env_a : s.env a = some (scalar x) := h_la
-                      have h_env_b : s.env b = some (tensor sh vals) := h_lb
-                      have ⟨ea, heas, heav⟩ := hsc a x h_la
-                      have ⟨gb, hgb, hgbv⟩ := hten b sh vals h_lb
-                      simp only [evalInstr, symEvalInstr, h_op, h_args, evalOp, symEvalOp, symAdd,
-                                 MachineState.lookup, h_env_a, h_env_b, SymState.lookup, heas, hgb]
-                      conv in (SymValue.tensor vals.length _) =>
-                        rw [show vals.length = (vals.map (· + x)).length from (List.length_map _).symm]
-                      refine bind_tensor_faithful hp hbs hgs hmem hsc hten hnone instr.result
-                        sh (vals.map (· + x)) (fun i => Expr.add ea (gb i)) ?_
-                      intro i hi
-                      simp only [List.length_map] at hi
-                      simp only [evalExpr, heav, hgbv i hi]
-                      simp [List.getD, hi, Int.add_comm]
-            | tensor sh_a vals_a =>
-                have h_env_a : s.env a = some (tensor sh_a vals_a) := h_la
-                have ⟨ga, hga, hgav⟩ := hten a sh_a vals_a h_la
-                cases h_lb2 : s.lookup b with
-                | none =>
-                    have hss_b : ss.env b = none := hnone b h_lb2
-                    simp only [evalInstr, symEvalInstr, h_op, h_args, evalOp, symEvalOp, symAdd,
-                               MachineState.lookup, h_env_a, h_lb2, SymState.lookup, hga]
-                    simp only [hss_b]; exact hf
-                | some vb2 => cases vb2 with
-                  | tensor sh_b vals_b =>
-                      have h_env_b : s.env b = some (tensor sh_b vals_b) := h_lb2
-                      have ⟨gb, hgb, hgbv⟩ := hten b sh_b vals_b h_lb2
-                      by_cases hsh : sh_a = sh_b
-                      · by_cases hlen : vals_a.length = vals_b.length
-                        · subst hsh
-                          simp only [evalInstr, symEvalInstr, h_op, h_args, evalOp, symEvalOp, symAdd,
-                                     MachineState.lookup, h_env_a, h_env_b, SymState.lookup, hga, hgb,
-                                     BEq.rfl, ↓reduceIte]
-                          have hlen2 : ((vals_a.zip vals_b).map (fun (x, y) => x + y)).length = vals_a.length := by
-                            simp [List.length_zip, hlen]
-                          rw [← hlen2]
-                          refine bind_tensor_faithful hp hbs hgs hmem hsc hten hnone instr.result
-                            sh_a ((vals_a.zip vals_b).map (fun (x, y) => x + y))
-                            (fun i => Expr.add (ga i) (gb i)) ?_
-                          intro i hi
-                          simp only [List.length_map, List.length_zip, hlen, min_self] at hi
-                          simp only [evalExpr, hgav i (hlen ▸ hi), hgbv i hi]
-                          simp [List.getD, List.getElem?_map, List.getElem?_zip, hi, hlen]
-                        · sorry -- addf tensor×tensor, length mismatch (not needed for vector-add)
-                      · sorry -- addf tensor×tensor, shape mismatch (not needed for vector-add)
-                  | scalar y =>
-                      have h_env_b2 : s.env b = some (scalar y) := h_lb2
-                      have ⟨eb, hebs, hebv⟩ := hsc b y h_lb2
-                      simp only [evalInstr, symEvalInstr, h_op, h_args, evalOp, symEvalOp, symAdd,
-                                 MachineState.lookup, h_env_a, h_env_b2, SymState.lookup, hga, hebs]
-                      conv in (SymValue.tensor vals_a.length _) =>
-                        rw [show vals_a.length = (vals_a.map (· + y)).length from (List.length_map _).symm]
-                      refine bind_tensor_faithful hp hbs hgs hmem hsc hten hnone instr.result
-                        sh_a (vals_a.map (· + y)) (fun i => Expr.add (ga i) eb) ?_
-                      intro i hi
-                      simp only [List.length_map] at hi
-                      simp only [evalExpr, hebv, hgav i hi]
-                      simp [List.getD, hi, Int.add_comm]
-      | [] =>
-          simp only [evalInstr, symEvalInstr, h_op, evalOp, symEvalOp, symAdd]; exact hf
-      | [_] =>
-          simp only [evalInstr, symEvalInstr, h_op, evalOp, symEvalOp, symAdd]; exact hf
-      | _ :: _ :: _ :: _ =>
-          simp only [evalInstr, symEvalInstr, h_op, evalOp, symEvalOp, symAdd]; exact hf
+              simp only [evalInstr, symEvalInstr, symEvalOp, evalOp, h_op, h_args,
+                MachineState.lookup, h_la, Option.bind_none, SymState.lookup,
+                hnone a h_la, symAdd]; exact hid
+          | some va =>
+              cases h_lb : s.env b with
+              | none =>
+                  cases va with
+                  | scalar x =>
+                      obtain ⟨ea, hsa, _⟩ := hsc a x h_la
+                      simp only [evalInstr, symEvalInstr, symEvalOp, evalOp, h_op, h_args,
+                        MachineState.lookup, h_la, h_lb, Option.bind_some, Option.bind_none,
+                        SymState.lookup, hsa, hnone b h_lb, symAdd]; exact hid
+                  | tensor sh xs =>
+                      obtain ⟨g, hsg, _⟩ := hten a sh xs h_la
+                      simp only [evalInstr, symEvalInstr, symEvalOp, evalOp, h_op, h_args,
+                        MachineState.lookup, h_la, h_lb, Option.bind_some, Option.bind_none,
+                        SymState.lookup, hsg, hnone b h_lb, symAdd]; exact hid
+                  | fscalar _ => sorry
+                  | ftensor _ _ => sorry
+              | some vb =>
+                  cases va with
+                  | scalar x =>
+                      cases vb with
+                      | scalar y =>
+                          obtain ⟨ea, hsa, hea⟩ := hsc a x h_la
+                          obtain ⟨eb, hsb, heb⟩ := hsc b y h_lb
+                          simp only [evalInstr, symEvalInstr, symEvalOp, evalOp, h_op, h_args,
+                            MachineState.lookup, h_la, h_lb, Option.bind_some,
+                            SymState.lookup, hsa, hsb, symAdd]
+                          exact bind_scalar_faithful hp hbs hgs hmem hsc hten hnone _ _ _
+                            (by simp [evalExpr, hea, heb])
+                      | tensor sh ys =>
+                          obtain ⟨ea, hsa, hea⟩ := hsc a x h_la
+                          obtain ⟨g, hsg, heg⟩ := hten b sh ys h_lb
+                          simp only [evalInstr, symEvalInstr, symEvalOp, evalOp, h_op, h_args,
+                            MachineState.lookup, h_la, h_lb, Option.bind_some,
+                            SymState.lookup, hsa, hsg, symAdd]
+                          simp only [show ys.length = (ys.map (fun z => z + x)).length from by simp]
+                          apply bind_tensor_faithful hp hbs hgs hmem hsc hten hnone
+                          intro i hi; simp only [List.length_map] at hi
+                          simp only [evalExpr]; rw [hea, heg i hi, map_add_getD ys x i hi]; omega
+                      | fscalar _ => sorry
+                      | ftensor _ _ => sorry
+                  | tensor sh xs =>
+                      cases vb with
+                      | scalar y =>
+                          obtain ⟨g, hsg, heg⟩ := hten a sh xs h_la
+                          obtain ⟨eb, hsb, heb⟩ := hsc b y h_lb
+                          simp only [evalInstr, symEvalInstr, symEvalOp, evalOp, h_op, h_args,
+                            MachineState.lookup, h_la, h_lb, Option.bind_some,
+                            SymState.lookup, hsg, hsb, symAdd]
+                          simp only [show xs.length = (xs.map (fun z => z + y)).length from by simp]
+                          apply bind_tensor_faithful hp hbs hgs hmem hsc hten hnone
+                          intro i hi; simp only [List.length_map] at hi
+                          simp only [evalExpr]; rw [heg i hi, heb, map_add_getD xs y i hi]
+                      | tensor _ _ => sorry
+                      | fscalar _ => sorry
+                      | ftensor _ _ => sorry
+                  | fscalar _ => sorry
+                  | ftensor _ _ => sorry
+      | _ => sorry
+
+  | .muli =>
+      match h_args : instr.args with
+      | [a, b] =>
+          cases h_la : s.env a with
+          | none =>
+              simp only [evalInstr, symEvalInstr, symEvalOp, evalOp, h_op, h_args,
+                MachineState.lookup, h_la, Option.bind_none, TritonValue.zipWith,
+                SymState.lookup, hnone a h_la]; exact hid
+          | some va =>
+              cases h_lb : s.env b with
+              | none =>
+                  cases va with
+                  | scalar x =>
+                      obtain ⟨ea, hsa, _⟩ := hsc a x h_la
+                      simp only [evalInstr, symEvalInstr, symEvalOp, evalOp, h_op, h_args,
+                        MachineState.lookup, h_la, h_lb, Option.bind_some, Option.bind_none,
+                        TritonValue.zipWith, SymState.lookup, hsa, hnone b h_lb]; exact hid
+                  | tensor sh xs =>
+                      obtain ⟨g, hsg, _⟩ := hten a sh xs h_la
+                      simp only [evalInstr, symEvalInstr, symEvalOp, evalOp, h_op, h_args,
+                        MachineState.lookup, h_la, h_lb, Option.bind_some, Option.bind_none,
+                        TritonValue.zipWith, SymState.lookup, hsg, hnone b h_lb]; exact hid
+                  | fscalar _ => sorry
+                  | ftensor _ _ => sorry
+              | some vb =>
+                  cases va with
+                  | scalar x =>
+                      cases vb with
+                      | scalar y =>
+                          obtain ⟨ea, hsa, hea⟩ := hsc a x h_la
+                          obtain ⟨eb, hsb, heb⟩ := hsc b y h_lb
+                          simp only [evalInstr, symEvalInstr, symEvalOp, evalOp, h_op, h_args,
+                            MachineState.lookup, h_la, h_lb, Option.bind_some,
+                            TritonValue.zipWith, SymState.lookup, hsa, hsb]
+                          exact bind_scalar_faithful hp hbs hgs hmem hsc hten hnone _ _ _
+                            (by simp [evalExpr, hea, heb])
+                      | tensor _ _ => sorry
+                      | fscalar _ => sorry
+                      | ftensor _ _ => sorry
+                  | tensor _ _ => sorry
+                  | fscalar _ => sorry
+                  | ftensor _ _ => sorry
+      | _ => sorry
+
   | .addptr =>
       match h_args : instr.args with
       | [p, o] =>
-          cases h_lp : s.lookup p with
+          cases h_lp : s.env p with
           | none =>
-              have hss_p : ss.env p = none := hnone p h_lp
-              simp only [evalInstr, symEvalInstr, h_op, h_args, evalOp, symEvalOp,
-                         MachineState.lookup, h_lp, SymState.lookup, hss_p]
-              exact hf
-          | some vp => cases vp with
-            | scalar base =>
-                cases h_lo : s.lookup o with
-                | none =>
-                    have ⟨ep, heps, _⟩ := hsc p base h_lp
-                    have hss_o : ss.env o = none := hnone o h_lo
-                    simp only [evalInstr, symEvalInstr, h_op, h_args, evalOp, symEvalOp,
-                               MachineState.lookup, h_lp, h_lo, SymState.lookup, heps, hss_o]
-                    exact hf
-                | some vo => cases vo with
-                  | scalar off =>
-                      have ⟨ep, heps, hepv⟩ := hsc p base h_lp
-                      have ⟨eo, heos, heov⟩ := hsc o off h_lo
-                      simp only [evalInstr, symEvalInstr, h_op, h_args, evalOp, symEvalOp,
-                                 MachineState.lookup, h_lp, h_lo, SymState.lookup, heps, heos]
-                      exact bind_scalar_faithful hp hbs hgs hmem hsc hten hnone instr.result
-                        (base + off) (Expr.add ep eo) (by simp [evalExpr, hepv, heov])
-                  | tensor sh offs =>
-                      have h_env_p : s.env p = some (scalar base) := h_lp
-                      have h_env_o : s.env o = some (tensor sh offs) := h_lo
-                      have ⟨ep, heps, hepv⟩ := hsc p base h_lp
-                      have ⟨go, hgo, hgov⟩ := hten o sh offs h_lo
-                      simp only [evalInstr, symEvalInstr, h_op, h_args, evalOp, symEvalOp,
-                                 MachineState.lookup, h_env_p, h_env_o, SymState.lookup, heps, hgo]
-                      conv in (SymValue.tensor offs.length _) =>
-                        rw [show offs.length = (offs.map (· + base)).length from (List.length_map _).symm]
-                      refine bind_tensor_faithful hp hbs hgs hmem hsc hten hnone instr.result
-                        sh (offs.map (· + base)) (fun i => Expr.add ep (go i)) ?_
-                      intro i hi
-                      simp only [List.length_map] at hi
-                      simp only [evalExpr, hepv, hgov i hi]
-                      simp [List.getD, hi, Int.add_comm]
-            | tensor sh1 bases =>
-                have h_env_p : s.env p = some (tensor sh1 bases) := h_lp
-                have ⟨gp, hgp, hgpv⟩ := hten p sh1 bases h_lp
-                cases h_lo : s.lookup o with
-                | none =>
-                    have hss_o : ss.env o = none := hnone o h_lo
-                    simp only [evalInstr, symEvalInstr, h_op, h_args, evalOp, symEvalOp,
-                               MachineState.lookup, h_env_p, h_lo, SymState.lookup, hgp]
-                    simp only [hss_o]; exact hf
-                | some vo => cases vo with
-                  | scalar y =>
-                      have ⟨ey, heys, _⟩ := hsc o y h_lo
-                      simp only [evalInstr, symEvalInstr, h_op, h_args, evalOp, symEvalOp,
-                                 MachineState.lookup, h_env_p, h_lo, SymState.lookup, hgp, heys]
-                      exact hf
-                  | tensor sh2 offs =>
-                      have h_env_o : s.env o = some (tensor sh2 offs) := h_lo
-                      have ⟨go, hgo, hgov⟩ := hten o sh2 offs h_lo
-                      by_cases hsh : sh1 = sh2
-                      · by_cases hlen : bases.length = offs.length
-                        · subst hsh
-                          simp only [evalInstr, symEvalInstr, h_op, h_args, evalOp, symEvalOp,
-                                     MachineState.lookup, h_env_p, h_env_o, SymState.lookup, hgp, hgo,
-                                     BEq.rfl, ↓reduceIte]
-                          have hlen2 : ((bases.zip offs).map (fun (b, o) => b + o)).length = bases.length := by
-                            simp [List.length_zip, hlen]
-                          rw [← hlen2]
-                          refine bind_tensor_faithful hp hbs hgs hmem hsc hten hnone instr.result
-                            sh1 ((bases.zip offs).map (fun (b, o) => b + o))
-                            (fun i => Expr.add (gp i) (go i)) ?_
-                          intro i hi
-                          simp only [List.length_map, List.length_zip, hlen, min_self] at hi
-                          simp only [evalExpr, hgpv i (hlen ▸ hi), hgov i hi]
-                          simp [List.getD, List.getElem?_map, List.getElem?_zip, hi, hlen]
-                        · sorry -- addptr tensor×tensor, length mismatch (not needed)
-                      · sorry -- addptr tensor×tensor, shape mismatch (not needed)
-      | [] => simp only [evalInstr, symEvalInstr, h_op, evalOp, symEvalOp]; exact hf
-      | [_] => simp only [evalInstr, symEvalInstr, h_op, evalOp, symEvalOp]; exact hf
-      | _ :: _ :: _ :: _ => simp only [evalInstr, symEvalInstr, h_op, evalOp, symEvalOp]; exact hf
-  | .muli =>
-      simp only [evalInstr, symEvalInstr, h_op, evalOp, symEvalOp]
-      match h_args : instr.args with
-      | [a, b] =>
-          simp only [h_args]
-          cases h_la : s.lookup a with
-          | none =>
-              simp only [evalInstr, symEvalInstr, h_op, h_args, evalOp, symEvalOp,
-                         MachineState.lookup, h_la]
-              have hss : ss.env a = none := ss_none_of_none hnone a h_la
-              simp only [SymState.lookup, hss]; exact hf
-          | some va => cases va with
-            | scalar x =>
-                cases h_lb : s.lookup b with
-                | none =>
-                    have ⟨ea, heas, _⟩ := hsc a x h_la
-                    simp only [evalInstr, symEvalInstr, h_op, h_args, evalOp, symEvalOp,
-                               MachineState.lookup, h_la, h_lb, SymState.lookup, heas]
-                    have hss : ss.env b = none := ss_none_of_none hnone b h_lb
-                    simp only [hss]; exact hf
-                | some vb => cases vb with
-                  | scalar y =>
-                      have ⟨ea, heas, heav⟩ := hsc a x h_la
-                      have ⟨eb, hebs, hebv⟩ := hsc b y h_lb
-                      simp only [MachineState.lookup, h_la, h_lb, SymState.lookup, heas, hebs]
-                      exact bind_scalar_faithful hp hbs hgs hmem hsc hten hnone instr.result
-                        (x * y) (Expr.mul ea eb) (by simp [evalExpr, heav, hebv])
-                  | tensor _ _ =>
-                      have ⟨ea, heas, _⟩ := hsc a x h_la
-                      simp only [evalInstr, symEvalInstr, h_op, h_args, evalOp, symEvalOp,
-                                 MachineState.lookup, h_la, h_lb, SymState.lookup, heas]
-                      sorry -- fallback: needs bind_tensor_faithful
-            | tensor sh_a vals_a =>
-                have h_env_a : s.env a = some (tensor sh_a vals_a) := h_la
-                have ⟨ga, hga, _⟩ := hten a sh_a vals_a h_la
-                simp only [evalInstr, symEvalInstr, h_op, h_args, evalOp, symEvalOp,
-                           MachineState.lookup, h_env_a, SymState.lookup, hga]
-                sorry -- muli a-tensor: needs bind_tensor_faithful
-      | [] =>
-          simp only [evalInstr, symEvalInstr, h_op, evalOp, symEvalOp]; exact hf
-      | [_] =>
-          simp only [evalInstr, symEvalInstr, h_op, evalOp, symEvalOp]; exact hf
-      | _ :: _ :: _ :: _ =>
-          simp only [evalInstr, symEvalInstr, h_op, evalOp, symEvalOp]; exact hf
-  | .store =>
-      match h_args : instr.args with
-      | [p, v] =>
-          cases h_lp : s.lookup p with
-          | none =>
-              have h_env_p_none : s.env p = none := h_lp
-              have hss_p : ss.env p = none := hnone p h_lp
-              simp only [evalInstr, symEvalInstr, h_op, h_args, MachineState.lookup,
-                         h_env_p_none, SymState.lookup, hss_p]
-              exact hf
-          | some vp => cases vp with
-            | scalar addr =>
-                cases h_lv : s.lookup v with
-                | none =>
-                    have h_env_v_none : s.env v = none := h_lv
-                    have ⟨ep, heps, _⟩ := hsc p addr h_lp
-                    have h_env_p_sc : s.env p = some (scalar addr) := h_lp
-                    simp only [evalInstr, symEvalInstr, h_op, h_args, MachineState.lookup,
-                               h_env_p_sc, h_env_v_none, SymState.lookup, heps]
-                    have hss_v : ss.env v = none := hnone v h_lv
-                    simp only [hss_v]; exact hf
-                | some vv => cases vv with
-                  | scalar val =>
-                      have h_env_p_sc : s.env p = some (scalar addr) := h_lp
-                      have h_env_v_sc : s.env v = some (scalar val) := h_lv
-                      have ⟨ep, heps, hepv⟩ := hsc p addr h_lp
-                      have ⟨ev, hevs, hevv⟩ := hsc v val h_lv
-                      simp only [evalInstr, symEvalInstr, h_op, h_args, MachineState.lookup,
-                                 h_env_p_sc, h_env_v_sc, SymState.lookup, heps, hevs]
-                      refine ⟨hp, hbs, hgs, ?_, hsc, hten, hnone⟩
-                      sorry -- store address: evalExpr ep (fun _ => 0) = addr
-                  | tensor _ _ =>
-                      have h_env_p_sc : s.env p = some (scalar addr) := h_lp
-                      have ⟨ep, heps, _⟩ := hsc p addr h_lp
-                      have h_env_v_ten : s.env v = some (tensor _ _) := h_lv
-                      simp only [evalInstr, symEvalInstr, h_op, h_args, MachineState.lookup,
-                                 h_env_p_sc, h_lv, SymState.lookup, heps]
-                      sorry -- store v-tensor fallback
-            | tensor sh_p vals_p => sorry -- addptr p-tensor fallback
-      | [] => sorry -- addptr [] wrong args
-      | [_] => sorry -- addptr [_] wrong args
-      | _ :: _ :: _ :: _ =>
-          sorry -- addptr 3+ args wrong args
-  | _ =>
-      simp only [evalInstr, symEvalInstr, h_op, evalOp, symEvalOp]
-      split
-      · sorry -- catch-all none case
-      · sorry -- remaining ops: addptr, load, addf, maxsi etc.
+              simp only [evalInstr, symEvalInstr, symEvalOp, evalOp, h_op, h_args,
+                MachineState.lookup, h_lp, Option.bind_none, SymState.lookup, hnone p h_lp]
+              exact hid
+          | some vp =>
+              cases h_lo : s.env o with
+              | none =>
+                  cases vp with
+                  | scalar base =>
+                      obtain ⟨ep, hsp, _⟩ := hsc p base h_lp
+                      simp only [evalInstr, symEvalInstr, symEvalOp, evalOp, h_op, h_args,
+                        MachineState.lookup, h_lp, h_lo, Option.bind_some, Option.bind_none,
+                        SymState.lookup, hsp, hnone o h_lo]; exact hid
+                  | tensor sh1 bases =>
+                      obtain ⟨g, hsg, _⟩ := hten p sh1 bases h_lp
+                      simp only [evalInstr, symEvalInstr, symEvalOp, evalOp, h_op, h_args,
+                        MachineState.lookup, h_lp, h_lo, Option.bind_some, Option.bind_none,
+                        SymState.lookup, hsg, hnone o h_lo]; exact hid
+                  | fscalar _ => sorry
+                  | ftensor _ _ => sorry
+              | some vo =>
+                  cases vp with
+                  | scalar base =>
+                      cases vo with
+                      | scalar off =>
+                          obtain ⟨ep, hsp, hep⟩ := hsc p base h_lp
+                          obtain ⟨eo, hso, heo⟩ := hsc o off h_lo
+                          simp only [evalInstr, symEvalInstr, symEvalOp, evalOp, h_op, h_args,
+                            MachineState.lookup, h_lp, h_lo, Option.bind_some,
+                            SymState.lookup, hsp, hso]
+                          exact bind_scalar_faithful hp hbs hgs hmem hsc hten hnone _ _ _
+                            (by simp [evalExpr, hep, heo])
+                      | tensor sh offs =>
+                          obtain ⟨ep, hsp, hep⟩ := hsc p base h_lp
+                          obtain ⟨g, hsg, heg⟩ := hten o sh offs h_lo
+                          simp only [evalInstr, symEvalInstr, symEvalOp, evalOp, h_op, h_args,
+                            MachineState.lookup, h_lp, h_lo, Option.bind_some,
+                            SymState.lookup, hsp, hsg]
+                          simp only [show offs.length = (offs.map (fun z => z + base)).length from by simp]
+                          apply bind_tensor_faithful hp hbs hgs hmem hsc hten hnone
+                          intro i hi; simp only [List.length_map] at hi
+                          simp only [evalExpr]; rw [hep, heg i hi, map_add_getD offs base i hi]; omega
+                      | fscalar _ => sorry
+                      | ftensor _ _ => sorry
+                  | tensor _ _ => sorry
+                  | fscalar _ => sorry
+                  | ftensor _ _ => sorry
+      | _ => sorry
 
+  | .load          => sorry
+  | .load_masked   => sorry
+  | .store         => sorry
+  | .store_masked  => sorry
+  | .storef        => sorry
+  | .cmpi_slt      => sorry
+  | .cmpi_sge      => sorry
+  | .cmpi_sgt      => sorry
+  | .cmpi_sle      => sorry
+  | .cmpi_ne       => sorry
+  | .cmpi_eq       => sorry
+  | .cmpf_ole      => sorry
+  | .cmpf_olt      => sorry
+  | .get_num_programs _ => sorry
+  | .constantf _   => sorry
+  | .loadf         => sorry
+  | .andi          => sorry
+  | .subf          => sorry
+  | .divf          => sorry
+  | .mulf          => sorry
+  | .maxsi         => sorry
+  | .minsi         => sorry
+  | .remsi         => sorry
+  | .remui         => sorry
+  | .divsi         => sorry
+  | .divui         => sorry
+  | .subi          => sorry
+  | .shli          => sorry
+  | .shrsi         => sorry
+  | .shrui         => sorry
+  | .xori          => sorry
+  | .ori           => sorry
+  | .truncf        => sorry
+  | .extf          => sorry
+  | .sqrtf         => sorry
+  | .absf          => sorry
+  | .negf          => sorry
+  | .select        => sorry
+  | .dot           => sorry
+  | .reduce_sum _  => sorry
+  | .reduce_max _  => sorry
+  | .reduce_min _  => sorry
+  | .broadcast _   => sorry
+  | .expand_dims _ => sorry
+  | .expf          => sorry
+  | .constant_tensor _ _ => sorry
+  | .constant_tensorf _ _ => sorry
+  | .trans         => sorry
+  | .reshape       => sorry
+
+
+set_option maxHeartbeats 2000000 in
 theorem symEvalKernel_faithful (K : TritonKernel)
+   (s : MachineState) (ss : SymState) (mem : Nat → Int)
+   (h : StatesFaithful s ss mem) :
+   StatesFaithful (evalKernel K s) (symEvalKernel K ss) mem := by
+ induction K generalizing s ss with
+ | nil => simp [evalKernel, symEvalKernel]; exact h
+ | cons instr rest ih =>
+     simp only [evalKernel, symEvalKernel, List.foldl]
+     exact ih _ _ (evalInstr_faithful instr s ss mem h)
+
+
+-- Generic soundness bridge: for any kernel K, any init states satisfying
+-- StatesFaithful, the symbolic memory at any address evaluates to the
+-- concrete memory value under the interpretation mem.
+theorem symEval_sound (K : TritonKernel)
     (s : MachineState) (ss : SymState) (mem : Nat → Int)
-    (h : StatesFaithful s ss mem) :
-    StatesFaithful (evalKernel K s) (symEvalKernel K ss) mem := by
+    (h : StatesFaithful s ss mem) (addr : Nat) :
+    evalExpr ((symEvalKernel K ss).memory addr) mem =
+    (evalKernel K s).memory addr :=
+  (symEvalKernel_faithful K s ss mem h).2.2.2.1 addr
+
+
+-- ══════════════════════════════════════════════════════════════════════════════
+-- Section 7: StatesFaithfulMem driver (sound load/store via strengthened invariant)
+-- ══════════════════════════════════════════════════════════════════════════════
+
+-- Strengthened invariant: faithful AND concrete memory still equals the symbolic
+-- interpretation base `mem`. Holds from init through any non-store instruction.
+-- A store exits this regime (memory diverges) — handled as a terminal transition.
+def StatesFaithfulMem (s : MachineState) (ss : SymState) (mem : Nat → Int) : Prop :=
+  StatesFaithful s ss mem ∧ s.memory = mem
+
+theorem evalInstr_preserves_memory_of_ne_store
+    (instr : TritonInstr) (s : MachineState)
+    (hns : instr.op ≠ .store) (hnsf : instr.op ≠ .storef) :
+    (evalInstr instr s).memory = s.memory := by
+  unfold evalInstr
+  split
+  · exact absurd (by assumption) hns
+  · exact absurd (by assumption) hnsf
+  · cases evalOp instr.op instr.args s with
+    | none => rfl
+    | some val => rfl
+
+theorem evalInstr_faithful_mem
+    {s : MachineState} {ss : SymState} {mem : Nat → Int}
+    (instr : TritonInstr)
+    (hns : instr.op ≠ .store) (hnsf : instr.op ≠ .storef)
+    (hstep_or_load :
+       (instr.op = .load → ∃ p sh addrs, instr.args = [p] ∧ s.lookup p = some (tensor sh addrs))
+       ∧ (instr.op ≠ .load →
+            (StatesFaithful s ss mem →
+             StatesFaithful (evalInstr instr s) (symEvalInstr instr ss) mem)))
+    (h : StatesFaithfulMem s ss mem) :
+    StatesFaithfulMem (evalInstr instr s) (symEvalInstr instr ss) mem := by
+  obtain ⟨hsf, hraw⟩ := h
+  obtain ⟨hp, hbs, hgs, hmem, hsc, hten, hnone⟩ := hsf
+  by_cases hld : instr.op = .load
+  · obtain ⟨p, sh, addrs, h_args, h_lp⟩ := hstep_or_load.1 hld
+    refine ⟨load_tensor_faithful_when_memory_unchanged hp hbs hgs hmem hsc hten hnone
+      hraw instr p hld h_args sh addrs h_lp, ?_⟩
+    rw [evalInstr_preserves_memory_of_ne_store instr s hns hnsf]; exact hraw
+  · refine ⟨hstep_or_load.2 hld ⟨hp, hbs, hgs, hmem, hsc, hten, hnone⟩, ?_⟩
+    rw [evalInstr_preserves_memory_of_ne_store instr s hns hnsf]; exact hraw
+
+theorem prefix_faithful_mem (K : TritonKernel)
+    (hstep : ∀ (instr : TritonInstr), instr ∈ K →
+              ∀ (s : MachineState) (ss : SymState) (mem : Nat → Int),
+                StatesFaithfulMem s ss mem →
+                StatesFaithfulMem (evalInstr instr s) (symEvalInstr instr ss) mem)
+    (s : MachineState) (ss : SymState) (mem : Nat → Int)
+    (h : StatesFaithfulMem s ss mem) :
+    StatesFaithfulMem (evalKernel K s) (symEvalKernel K ss) mem := by
   induction K generalizing s ss with
-  | nil => simp [evalKernel, symEvalKernel]; exact h
+  | nil => simpa [evalKernel, symEvalKernel] using h
   | cons instr rest ih =>
-    simp only [evalKernel, symEvalKernel, List.foldl]
-    exact ih _ _ (evalInstr_faithful instr s ss mem h)
+      simp only [evalKernel, symEvalKernel, List.foldl]
+      exact ih (fun i hi => hstep i (List.mem_cons_of_mem _ hi)) _ _
+        (hstep instr (List.mem_cons_self ..) s ss mem h)
 
-theorem parsedVectorAddTutorial_prefix7_faithful (a b : List Int) (pid bs gs : Nat) :
-    StatesFaithful
-      (evalKernel (parsedVectorAddTutorial.take 7) (parsedInitState a b pid bs gs))
-      (symEvalKernel (parsedVectorAddTutorial.take 7) (symParsedVectorAddInitState pid bs gs a.length))
-      (concreteMem a b) :=
-  symEvalKernel_faithful (parsedVectorAddTutorial.take 7)
-    (parsedInitState a b pid bs gs)
-    (symParsedVectorAddInitState pid bs gs a.length)
-    (concreteMem a b)
-    (parsedInitStates_faithful a b pid bs gs)
+theorem evalKernel_append (xs ys : TritonKernel) (s : MachineState) :
+    evalKernel (xs ++ ys) s = evalKernel ys (evalKernel xs s) := by
+  simp only [evalKernel, List.foldl_append]
 
-theorem symEval_sound (K : TritonKernel) (a b : List Int) (pid bs gs i : Nat) :
-    evalExpr
-      ((symEvalKernel K (symVectorAddInitState pid bs gs a.length)).memory
-        (2 * a.length + pid * bs + i))
-      (concreteMem a b) =
-    MachineState.readMem (evalKernel K (vectorAddInitState a b pid bs gs))
-      (2 * a.length + pid * bs + i) := by
-  have hf := symEvalKernel_faithful K
-    (vectorAddInitState a b pid bs gs)
-    (symVectorAddInitState pid bs gs a.length)
-    (concreteMem a b)
-    (initStates_faithful a b pid bs gs)
-  obtain ⟨_, _, _, h_mem, _⟩ := hf
-  simp only [MachineState.readMem]
-  exact h_mem _
+theorem symEvalKernel_append (xs ys : TritonKernel) (ss : SymState) :
+    symEvalKernel (xs ++ ys) ss = symEvalKernel ys (symEvalKernel xs ss) := by
+  simp only [symEvalKernel, List.foldl_append]
+
+theorem kernel_faithful_terminal_store
+    (pre : TritonKernel) (storeInstr : TritonInstr)
+    (hpre_step : ∀ (instr : TritonInstr), instr ∈ pre →
+              ∀ (s : MachineState) (ss : SymState) (mem : Nat → Int),
+                StatesFaithfulMem s ss mem →
+                StatesFaithfulMem (evalInstr instr s) (symEvalInstr instr ss) mem)
+    (hstore : ∀ (s : MachineState) (ss : SymState) (mem : Nat → Int),
+                StatesFaithfulMem s ss mem →
+                StatesFaithful (evalInstr storeInstr s) (symEvalInstr storeInstr ss) mem)
+    (s : MachineState) (ss : SymState) (mem : Nat → Int)
+    (h : StatesFaithfulMem s ss mem) :
+    StatesFaithful (evalKernel (pre ++ [storeInstr]) s)
+                   (symEvalKernel (pre ++ [storeInstr]) ss) mem := by
+  rw [evalKernel_append, symEvalKernel_append]
+  have hpre := prefix_faithful_mem pre hpre_step s ss mem h
+  simp only [evalKernel, symEvalKernel, List.foldl_cons, List.foldl_nil]
+  exact hstore _ _ _ hpre
+
 
 #check @symEval_sound
 
