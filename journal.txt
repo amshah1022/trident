@@ -238,3 +238,136 @@ NEXT SESSION ORDER (revised, Option 2):
      WF1 from the produces-WF1 lemma of the producing instruction.
   5. Initial StatesFaithfulMem; rewire symCheckTutorial_sound through capstone.
 ─────────────────────────────────────────────────────────────────────────────
+
+═══ PIVOTAL FINDING (assembly pass, 2026-06-29): symEval_sound is UNSOUND-AS-STATED ═══
+
+symEvalKernel_faithful (Soundness.lean) claims, for ANY kernel K and ANY
+StatesFaithful init: StatesFaithful (evalKernel K s) (symEvalKernel K ss) mem.
+Proved by induction using evalInstr_faithful at each step.
+
+BUT: evalInstr_faithful is FALSE for load in general (load faithfulness needs
+s.memory = mem; plain StatesFaithful doesn't provide it — this is WHY we built
+StatesFaithfulMem). So symEvalKernel_faithful AS STATED is not a sound theorem;
+it only "holds" because evalInstr_faithful's load/store arms are `sorry`. Those
+sorries mark a FALSE statement, not a fillable gap.
+
+CONSEQUENCE: "make symEval_sound sound by closing evalInstr_faithful" is
+IMPOSSIBLE — the signature (plain StatesFaithful, any kernel) asserts something
+false (load faithful w/o memory precondition). symCheckTutorial_sound currently
+routes through this, so the tutorial's soundness currently RESTS ON that false
+generality (native_decide gives the Bool = true; the SOUNDNESS theorem connecting
+it to real execution passes through the sorried false-general bridge).
+
+FORCED ARCHITECTURE (the honest rewire):
+- Replace symEval_sound's use in symCheckTutorial_sound with a path through
+  kernel_faithful_terminal_store (the driver capstone).
+- This carries the pre ++ [store] no-RAW precondition — a REAL, honest restriction.
+  "Any .ttir" soundly means "any no-RAW / terminal-store kernel", NOT any kernel.
+- LINCHPIN CONFIRMED: parsedInitState.memory = concreteMem a b DEFINITIONALLY
+  (both = layoutMemory a b; Equiv.lean:23, Checker.lean:208). So initial
+  StatesFaithfulMem's (s.memory = mem) conjunct is `rfl`.
+- SPLIT CONFIRMED (informally): parsedVectorAddFixed = take 12 ++ drop 12, drop 12
+  is [store], take 12 all non-store. (native_decide check hit free-var issue
+  because parsedVectorAddFixed is in RunCheck.lean, not imported into test — the
+  split reasoning must live where the kernel is in scope, i.e. RunCheck.lean, OR
+  pass the kernel + its split proof as params to a generic lemma.)
+
+REWIRE PLAN (next session, start fresh — this is a TRUSTED-BRIDGE interface change):
+  1. Land per-op faithfulness lemmas into Soundness.lean, each verified green:
+     - produces-WF1: make_range (done /tmp), splat, addi/muli/addf/addptr (shape-preserving)
+     - faithful: constant, get_program_id(0), muli, make_range, splat,
+       addi(t+t, /tmp-validated), addptr, load(via load_faithful_mem)
+  2. Build a generic driver-based soundness lemma taking K, its pre++[store] split,
+     hpre_step, hstore, + init StatesFaithfulMem -> memory faithfulness conclusion
+     (same shape symEval_sound gave). This REPLACES symEval_sound for no-RAW kernels.
+  3. Rewire symCheckTutorial_sound (Checker.lean) through it. Discharge the 12
+     prefix ops' faithfulness; elementwise ops get WF1 from produces-WF1 of producers.
+  4. Verify RunCheck.lean tutorial theorems still pass; build green.
+  5. THEN consider: mark old symEvalKernel_faithful/symEval_sound as deprecated or
+     restrict their signature to prevent unsound reuse.
+
+DO NOT rush step 2-3: replacing the core soundness bridge is the worst place for
+file-drift error. Start fresh with a full re-read of symCheckTutorial_sound +
+symEvalKernel_faithful + the driver stack.
+═══════════════════════════════════════════════════════════════════════════════
+
+─── LANDED (assembly pass, 2026-06-29, green): WF1-production lemmas ───────────
+Added to Soundness.lean (after zip_add_getD), build green, sorry still 4:
+- make_range_produces_WF1  (make_range output always rank-1)
+- splat_produces_WF1_rank1 (splat [n] output is rank-1; needs rank-1 instr shape)
+
+CRITICAL STRUCTURAL FACT found reading RunCheck.lean (the REAL tutorial kernel):
+- Tutorial's data combine is `addf` (line 21: c = a+b), NOT addi. addi is only
+  for INDEX arith (idx = voffset+range, line 15).
+- BUT concrete evalOp .addf handles INTEGER tensors directly (Semantics.lean:
+  tensor s1 xs, tensor s2 ys => if s1==s2 then tensor (zip +) else none) — same
+  structure as addi. AND symbolic .addf => symAdd (SAME function as addi!).
+  => addf tensor+tensor faithfulness = IDENTICAL proof to addi (both via symAdd,
+     both same concrete zip-guard). The addi-under-WF1 /tmp proof transfers to
+     addf verbatim (change op name only). NO separate addf logic needed.
+- Model unifies add/addf over Int (Values.lean works over Int). No float here.
+
+TUTORIAL KERNEL = parsedVectorAddFixed (RunCheck.lean:9), 13 instrs:
+  [constant 1024, get_program_id 0, muli, make_range (some 1024), splat [1024],
+   addi, addptr, addptr, addptr, load, load, addf] ++ [store]
+  = take 12 ++ drop 12; drop 12 = [store]; take 12 all non-store. (split confirmed)
+
+REWIRE TARGET (Checker.lean:364 symCheckTutorial_sound):
+  Currently routes through symEval_sound (UNSOUND-AS-STATED — see pivotal finding).
+  Replace with driver-based path through kernel_faithful_terminal_store.
+  LINCHPIN: parsedInitState.memory = concreteMem a b = layoutMemory a b (rfl),
+  so initial StatesFaithfulMem's (s.memory=mem) conjunct is rfl.
+  initStatesTutorial_faithful already gives the StatesFaithful half.
+
+NEXT SESSION (turnkey, start w/ fresh read of Checker.lean symCheckTutorial_sound
++ symEvalKernel_faithful + driver stack):
+  1. Land per-op FAITHFULNESS lemmas into Soundness.lean, each green:
+     constant, get_program_id(axis 0), muli(t+t via symAdd+WF1), make_range,
+     splat, addi(t+t, /tmp-validated), addf(t+t = same as addi), addptr, load
+     (load via load_faithful_mem from driver). Note: muli t+t uses symMul (also
+     length-guarded this session) — mirror addi proof w/ symMul + zip_mul helper.
+  2. Build generic driver soundness lemma: takes K, pre++[store] split, per-op
+     hstep (StatesFaithfulMem-preserving, discharging WF1 from produces-WF1),
+     hstore, init StatesFaithfulMem -> memory faithfulness. Routes through
+     kernel_faithful_terminal_store. HONEST replacement for symEval_sound (carries
+     no-RAW/terminal-store precondition).
+  3. Rewire symCheckTutorial_sound through it. Discharge 12 prefix ops.
+  4. Re-verify RunCheck.lean (checker_pid0/1, parsedVectorAddFixed_correct) green.
+  5. Optionally deprecate/restrict old symEval_sound to prevent unsound reuse.
+─────────────────────────────────────────────────────────────────────────────
+
+─── LANDED (assembly pass cont., 2026-06-29, all green, sorry still 4) ────────
+Per-op FAITHFULNESS lemmas now in Soundness.lean:
+  constant_faithful, get_program_id_faithful (axis 0),
+  make_range_faithful, splat_scalar_faithful
+WF1-production lemmas: make_range_produces_WF1, splat_produces_WF1_rank1
+All standalone, take StatesFaithful (or the 7 components), return StatesFaithful.
+splat_scalar takes the 7 components + operand scalar hyp (not bundled h).
+
+REMAINING per-op lemmas (harder — DO NOT underestimate):
+  - addi/addf tensor+tensor: /tmp-validated proof takes hwa hwb : WF1 hyps.
+    addf uses SAME symAdd as addi -> same proof, change op name.
+  - muli tensor+tensor: mirror addi but via symMul (length-guarded this session);
+    needs a zip_mul_getD helper (analog of zip_add_getD, structural induction).
+  - addptr tensor case (tutorial: addptr [scalar_ptr?, idx_tensor]) — CHECK actual
+    operand types in tutorial: x_ptr is scalar, idx is tensor -> scalar+tensor
+    addptr case. Read evalOp .addptr + symEvalOp .addptr arms.
+  - load: use driver's load_faithful_mem (already proven) — NOT a new faithful
+    lemma; the dispatcher calls it directly in the load branch.
+
+>>> THE NOVEL INTERCONNECTED PART (not yet built or tested) <
+The DISPATCHER that threads WF1: elementwise lemmas need hwa/hwb : WF1 of their
+operands. Those come from produces-WF1 lemmas of the PRODUCING instructions
+earlier in the kernel. Connecting "instr 6 (addi voffset range) operands are WF1
+because instr 4 (make_range) and instr 5 (splat) produced them WF1" is DISPATCHER
+LOGIC — a per-kernel or generic fold that tracks which var was produced by which
+op and carries WF1 forward. THIS IS THE JOINT between per-op lemmas and the driver
+and it has NEVER been built. It's the real remaining design+proof work, plus:
+  - driver soundness lemma (K, split, hstep, hstore, init SFM -> mem faithfulness)
+  - rewire symCheckTutorial_sound (Checker.lean:364) through it
+  - re-verify RunCheck.lean
+
+NEXT SESSION: start with the DISPATCHER design (how WF1 threads through the instr
+sequence) — that's the crux, harder than the remaining per-op lemmas. Then finish
+per-op lemmas, then rewire. Fresh read of Checker.lean + driver stack first.
+─────────────────────────────────────────────────────────────────────────────

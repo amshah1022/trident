@@ -119,6 +119,110 @@ theorem zip_add_getD (a b : List Int) (i : Nat)
         simp only [List.zip_cons_cons, List.map_cons, List.getD_cons_succ]
         exact ih ys j (by simpa using hi) (by simpa using hab)
 
+-- ── produces-WF1 lemmas: tensor-producing ops yield rank-1 wellformed output ──
+-- These discharge the WF1 hypotheses of elementwise faithfulness lemmas locally,
+-- from whatever op produced each operand. No global invariant threading needed.
+
+theorem make_range_produces_WF1 (sizeOpt : Option Nat) (args : List String) (s : MachineState)
+    (sh : List Nat) (vals : List Int)
+    (h : evalOp (.make_range sizeOpt) args s = some (tensor sh vals)) :
+    (tensor sh vals).WF1 := by
+  simp only [evalOp] at h
+  injection h with h
+  injection h with hsh hvals
+  subst hsh; subst hvals
+  simp only [TritonValue.WF1]
+  simp [List.length_map, List.length_range]
+
+theorem splat_produces_WF1_rank1 (n : Nat) (args : List String) (s : MachineState)
+    (sh : List Nat) (vals : List Int)
+    (h : evalOp (.splat [n]) args s = some (tensor sh vals)) :
+    (tensor sh vals).WF1 := by
+  simp only [evalOp] at h
+  split at h
+  · split at h
+    · injection h with h
+      injection h with hsh hvals
+      subst hsh; subst hvals
+      simp only [TritonValue.WF1]
+      simp [List.length_replicate, List.foldl]
+    · exact absurd h (by simp)
+    · simp at h
+  · simp at h
+
+-- ── per-op faithfulness lemmas (standalone, for the driver dispatcher) ────────
+-- Each proves one op faithful given StatesFaithful. Elementwise ones take WF1
+-- operand hypotheses (discharged from produces-WF1 lemmas). Load goes through
+-- the driver's load_faithful_mem separately.
+
+theorem constant_faithful
+    {s : MachineState} {ss : SymState} {mem : Nat → Int}
+    (h : StatesFaithful s ss mem)
+    (instr : TritonInstr) (v : Int) (h_op : instr.op = .constant v) :
+    StatesFaithful (evalInstr instr s) (symEvalInstr instr ss) mem := by
+  obtain ⟨hp, hbs, hgs, hmem, hsc, hten, hnone⟩ := h
+  simp only [evalInstr, symEvalInstr, symEvalOp, evalOp, h_op]
+  exact bind_scalar_faithful hp hbs hgs hmem hsc hten hnone
+    instr.result v (Expr.lit v) (by simp [evalExpr])
+
+theorem get_program_id_faithful
+    {s : MachineState} {ss : SymState} {mem : Nat → Int}
+    (h : StatesFaithful s ss mem)
+    (instr : TritonInstr) (h_op : instr.op = .get_program_id 0) :
+    StatesFaithful (evalInstr instr s) (symEvalInstr instr ss) mem := by
+  obtain ⟨hp, hbs, hgs, hmem, hsc, hten, hnone⟩ := h
+  simp only [evalInstr, symEvalInstr, symEvalOp, evalOp, h_op]
+  simp only [(by decide : (0 == 0) = true), ↓reduceIte]
+  exact bind_scalar_faithful hp hbs hgs hmem hsc hten hnone _ _ _
+    (by simp [evalExpr, hp])
+
+theorem make_range_faithful
+    {s : MachineState} {ss : SymState} {mem : Nat → Int}
+    (h : StatesFaithful s ss mem)
+    (instr : TritonInstr) (sizeOpt : Option Nat) (h_op : instr.op = .make_range sizeOpt) :
+    StatesFaithful (evalInstr instr s) (symEvalInstr instr ss) mem := by
+  obtain ⟨hp, hbs, hgs, hmem, hsc, hten, hnone⟩ := h
+  simp only [evalInstr, symEvalInstr, symEvalOp, evalOp, h_op]
+  rw [← hbs]
+  have hlen : (List.map Int.ofNat (List.range (sizeOpt.getD s.block_size))).length
+              = sizeOpt.getD s.block_size := by simp
+  conv in (SymValue.tensor (sizeOpt.getD s.block_size) _) =>
+    rw [show sizeOpt.getD s.block_size =
+          (List.map Int.ofNat (List.range (sizeOpt.getD s.block_size))).length from hlen.symm]
+  apply bind_tensor_faithful hp hbs hgs hmem hsc hten hnone
+  intro i hi
+  rw [hlen] at hi
+  simp only [evalExpr]
+  rw [List.getD_eq_getElem?_getD, List.getElem?_map]
+  simp [List.getElem?_range, hi]
+
+theorem splat_scalar_faithful
+    {s : MachineState} {ss : SymState} {mem : Nat → Int}
+    (hp : s.pid = ss.pid) (hbs : s.block_size = ss.block_size)
+    (hgs : s.grid_size = ss.grid_size)
+    (hmem : ∀ addr, evalExpr (ss.memory addr) mem = s.memory addr)
+    (hsc : ∀ v val, s.env v = some (scalar val) →
+        ∃ e, ss.env v = some (SymValue.scalar e) ∧ evalExpr e mem = val)
+    (hten : ∀ v sh vals, s.env v = some (tensor sh vals) →
+        ∃ g, ss.env v = some (SymValue.tensor vals.length g)
+          ∧ ∀ i, i < vals.length → evalExpr (g i) mem = vals.getD i 0)
+    (hnone : ∀ v, s.env v = none → ss.env v = none)
+    (instr : TritonInstr) (shape : List Nat) (v : String)
+    (h_op : instr.op = .splat shape) (h_args : instr.args = [v])
+    (x : Int) (h_lv : s.env v = some (scalar x)) :
+    StatesFaithful (evalInstr instr s) (symEvalInstr instr ss) mem := by
+  obtain ⟨e, hse, heval⟩ := hsc v x h_lv
+  simp only [evalInstr, symEvalInstr, symEvalOp, evalOp, h_op, h_args,
+    MachineState.lookup, h_lv, Option.bind_some, SymState.lookup, hse]
+  conv in (SymValue.tensor (shape.foldl (· * ·) 1) _) =>
+    rw [show shape.foldl (· * ·) 1 =
+        (List.replicate (shape.foldl (· * ·) 1) x).length from by simp]
+  apply bind_tensor_faithful hp hbs hgs hmem hsc hten hnone
+  intro i hi
+  simp only [List.length_replicate] at hi
+  simp only [evalExpr, heval]
+  simp [List.getElem?_replicate, hi]
+
 private theorem zipWith_add_getD' (a b : List Int) (i : Nat)
    (ha : i < a.length) (hb : i < b.length) :
    ((a.zip b).map (fun p => p.fst + p.snd)).getD i 0 =
